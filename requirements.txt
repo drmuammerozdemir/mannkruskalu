@@ -3,8 +3,7 @@ pandas
 numpy
 matplotlib
 seaborn
-pyreadstat
-scikit-learn
 scipy
-sklearn.metrics
-scikit_posthocs
+statsmodels
+scikit-posthocs
+pyreadstat
