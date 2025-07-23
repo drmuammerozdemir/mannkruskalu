@@ -1,0 +1,10 @@
+streamlit
+pandas
+numpy
+matplotlib
+seaborn
+pyreadstat
+scikit-learn
+scipy
+sklearn.metrics
+scikit_posthocs
