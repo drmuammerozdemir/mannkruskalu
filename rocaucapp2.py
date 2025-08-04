@@ -169,7 +169,7 @@ else:
     ax.set_xlabel(xaxis_label)
     ax.set_ylabel(yaxis_label)
 
-        for ax in axes[len(test_vars):]:
+    for ax in axes[len(test_vars):]:
             ax.axis('off')
 
         fig.suptitle(title_input, fontsize=16)
@@ -179,6 +179,7 @@ else:
         st.download_button("Download JPG", fig_to_bytes(fig, "jpg"), file_name="figure.jpg")
 
         st.download_button("Download PDF", fig_to_bytes(fig, "pdf"), file_name="figure.pdf")
+
 
 
 
