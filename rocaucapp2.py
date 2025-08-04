@@ -173,12 +173,13 @@ else:
             ax.axis('off')
 
     fig.suptitle(title_input, fontsize=16)
-        st.pyplot(fig)
+    st.pyplot(fig)
 
         st.download_button("Download PNG", fig_to_bytes(fig, "png"), file_name="figure.png")
         st.download_button("Download JPG", fig_to_bytes(fig, "jpg"), file_name="figure.jpg")
 
         st.download_button("Download PDF", fig_to_bytes(fig, "pdf"), file_name="figure.pdf")
+
 
 
 
