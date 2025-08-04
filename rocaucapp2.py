@@ -35,7 +35,8 @@ if uploaded_file:
             tmp_file_path = tmp_file.name
         df, meta = pyreadstat.read_sav(tmp_file_path)
 
-    st.write('Data Preview:', df.head())
+    st.subheader(\"Edit Your Data (Optional)\")
+df = st.data_editor(df, num_rows=\"dynamic\", use_container_width=True)
     st.sidebar.header("Options")
 
     analysis_type = st.sidebar.radio("Select Analysis", ["Statistical Plots", "Summary Table"])
@@ -106,6 +107,7 @@ if uploaded_file:
 
         fig, axes = plt.subplots(nrows, ncols, figsize=(6 * ncols, 5 * nrows))
         axes = np.array(axes).reshape(-1)
+        fig.subplots_adjust(hspace=0.4, wspace=0.3)
 
         for idx, test_var in enumerate(test_vars):
             df_clean = df[[group_var, test_var]].dropna()
@@ -156,10 +158,11 @@ if uploaded_file:
                     visible_pairs += 1
 
             if custom_labels:
-                ax.set_xticks(range(len(custom_labels)))
-                ax.set_xticklabels(custom_labels)
-            else:
-                ax.set_xticklabels(group_labels)
+    ax.set_xticks(range(len(group_labels)))
+    ax.set_xticklabels(custom_labels)
+else:
+    ax.set_xticks(range(len(group_labels)))
+    ax.set_xticklabels(group_labels)
 
             subtitle = subplot_titles[idx] if idx < len(subplot_titles) else test_var
             ax.set_title(subtitle)
@@ -174,4 +177,5 @@ if uploaded_file:
 
         st.download_button("Download PNG", fig_to_bytes(fig, "png"), file_name="figure.png")
         st.download_button("Download JPG", fig_to_bytes(fig, "jpg"), file_name="figure.jpg")
+
         st.download_button("Download PDF", fig_to_bytes(fig, "pdf"), file_name="figure.pdf")
