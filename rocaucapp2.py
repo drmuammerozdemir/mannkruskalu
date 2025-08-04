@@ -35,8 +35,8 @@ if uploaded_file:
             tmp_file_path = tmp_file.name
         df, meta = pyreadstat.read_sav(tmp_file_path)
 
-    st.subheader(\"Edit Your Data (Optional)\")
-df = st.data_editor(df, num_rows=\"dynamic\", use_container_width=True)
+    st.subheader("Edit Your Data (Optional)")
+df = st.data_editor(df, num_rows="dynamic", use_container_width=True)
     st.sidebar.header("Options")
 
     analysis_type = st.sidebar.radio("Select Analysis", ["Statistical Plots", "Summary Table"])
@@ -179,3 +179,4 @@ else:
         st.download_button("Download JPG", fig_to_bytes(fig, "jpg"), file_name="figure.jpg")
 
         st.download_button("Download PDF", fig_to_bytes(fig, "pdf"), file_name="figure.pdf")
+
