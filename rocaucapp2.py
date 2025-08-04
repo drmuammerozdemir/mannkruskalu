@@ -81,8 +81,9 @@ if uploaded_file:
             rows.append([var] + summaries + [p_display])
         columns = ["Parameter"] + group_labels + ["p-value"]
         summary_df = pd.DataFrame(rows, columns=columns)
-        st.dataframe(summary_df.style.format(na_rep="").set_table_styles(
-            [{'selector': 'th', 'props': [('text-align', 'center')]}]))
+        st.dataframe(summary_df.style.format(na_rep="").set_table_styles([
+            {'selector': 'th', 'props': [('text-align', 'center')]}
+        ]))
 
     if analysis_type == "Statistical Plots":
         title_input = st.text_input("Figure Title", value="Statistical Comparison")
@@ -157,33 +158,24 @@ if uploaded_file:
                     ax.text((x1 + x2) / 2, y + spacing * 0.35, f"p = {pval:.3f}", ha='center', va='bottom')
                     visible_pairs += 1
 
-if custom_labels:
-    ax.set_xticks(range(len(group_labels)))
-    ax.set_xticklabels(custom_labels)
-else:
-    ax.set_xticks(range(len(group_labels)))
-    ax.set_xticklabels(group_labels)
+            if custom_labels:
+                ax.set_xticks(range(len(group_labels)))
+                ax.set_xticklabels(custom_labels)
+            else:
+                ax.set_xticks(range(len(group_labels)))
+                ax.set_xticklabels(group_labels)
 
-    subtitle = subplot_titles[idx] if idx < len(subplot_titles) else test_var
-    ax.set_title(subtitle)
-    ax.set_xlabel(xaxis_label)
-    ax.set_ylabel(yaxis_label)
+            subtitle = subplot_titles[idx] if idx < len(subplot_titles) else test_var
+            ax.set_title(subtitle)
+            ax.set_xlabel(xaxis_label)
+            ax.set_ylabel(yaxis_label)
 
-    for ax in axes[len(test_vars):]:
+        for ax in axes[len(test_vars):]:
             ax.axis('off')
 
-    fig.suptitle(title_input, fontsize=16)
-    st.pyplot(fig)
+        fig.suptitle(title_input, fontsize=16)
+        st.pyplot(fig)
 
-    st.download_button("Download PNG", fig_to_bytes(fig, "png"), file_name="figure.png")
-    st.download_button("Download JPG", fig_to_bytes(fig, "jpg"), file_name="figure.jpg")
-
-    st.download_button("Download PDF", fig_to_bytes(fig, "pdf"), file_name="figure.pdf")
-
-
-
-
-
-
-
-
+        st.download_button("Download PNG", fig_to_bytes(fig, "png"), file_name="figure.png")
+        st.download_button("Download JPG", fig_to_bytes(fig, "jpg"), file_name="figure.jpg")
+        st.download_button("Download PDF", fig_to_bytes(fig, "pdf"), file_name="figure.pdf")
