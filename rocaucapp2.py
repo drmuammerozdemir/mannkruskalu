@@ -157,7 +157,7 @@ if uploaded_file:
                     ax.text((x1 + x2) / 2, y + spacing * 0.35, f"p = {pval:.3f}", ha='center', va='bottom')
                     visible_pairs += 1
 
-            if custom_labels:
+if custom_labels:
     ax.set_xticks(range(len(group_labels)))
     ax.set_xticklabels(custom_labels)
 else:
@@ -179,5 +179,6 @@ else:
         st.download_button("Download JPG", fig_to_bytes(fig, "jpg"), file_name="figure.jpg")
 
         st.download_button("Download PDF", fig_to_bytes(fig, "pdf"), file_name="figure.pdf")
+
 
 
