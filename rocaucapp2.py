@@ -13,6 +13,13 @@ import itertools
 import math
 from io import BytesIO
 
+def format_p(p):
+    try:
+        if pd.isna(p):
+            return ""
+        return "<0,001" if p < 0.001 else f"{p:.3f}".replace(".", ",")
+    except Exception:
+        return ""
 
 # ---- Helpers ----
 def fig_to_bytes(fig, fmt):
@@ -124,12 +131,12 @@ if uploaded_file:
                 u_stat, p_value = mannwhitneyu(group_data[0], group_data[1], alternative="two-sided")
             else:
                 h_stat, p_value = kruskal(*group_data)
-
+            
             if not show_nonsignificant and p_value > 0.05:
                 p_display = ""
             else:
-                p_display = f"{p_value:.3f}"
-
+                p_display = format_p(p_value)
+           
             rows.append([var] + summaries + [p_display])
 
         columns = ["Parameter"] + group_labels + ["p-value"]
@@ -203,7 +210,7 @@ if uploaded_file:
                 ypos = ymax + 0.1 * (ymax if ymax != 0 else 1)
                 ax.plot([0, 0, 1, 1], [ypos, ypos * 1.05, ypos * 1.05, ypos], lw=1.5, c="k")
                 if show_nonsignificant or p_value <= 0.05:
-                    ax.text(0.5, ypos * 1.07, f"p = {p_value:.3f}", ha="center", va="bottom")
+                    ax.text(0.5, ypos + 0.07*ypos, f"p = {format_p(p_value)}", ha='center', va='bottom')
             else:
                 h_stat, p_value = kruskal(*group_data)
                 posthoc = sp.posthoc_dunn(df_clean, val_col=test_var, group_col=group_var, p_adjust="bonferroni")
@@ -222,7 +229,7 @@ if uploaded_file:
                     x2 = group_labels.index(g2)
                     y = ypos + visible * spacing
                     ax.plot([x1, x1, x2, x2], [y, y + 0.3 * spacing, y + 0.3 * spacing, y], lw=1.5, c="k")
-                    ax.text((x1 + x2) / 2, y + 0.35 * spacing, f"p = {pval:.3f}", ha="center", va="bottom")
+                    ax.text((x1 + x2) / 2, y + spacing * 0.35, f"p = {format_p(pval)}", ha='center', va='bottom')
                     visible += 1
 
             # Axis labels & titles
