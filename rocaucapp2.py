@@ -21,6 +21,13 @@ def format_p(p):
     except Exception:
         return ""
 
+# p-etiketi: "<0,001" ise eşittir yok, diğerlerinde "p = x,xxx"
+def format_p_label(p):
+    s = format_p(p)
+    if not s:
+        return ""
+    return f"p {s}" if s.startswith("<") else f"p = {s}"
+
 # ---- Helpers ----
 def fig_to_bytes(fig, fmt):
     """Legacy helper (kept for compatibility). Saves current fig as-is."""
@@ -29,7 +36,6 @@ def fig_to_bytes(fig, fmt):
     buf.seek(0)
     return buf
 
-
 def export_fig_bytes(fig, fmt, width_px=None, height_px=None, dpi=300):
     """
     Export the given matplotlib figure to bytes with custom pixel size and dpi.
@@ -37,7 +43,6 @@ def export_fig_bytes(fig, fmt, width_px=None, height_px=None, dpi=300):
     - For PNG/JPG: uses dpi and target size.
     - For PDF: vector; uses size in inches (dpi ignored by PDF backends).
     """
-    # Store original size (width, height) in inches
     orig_size_in = fig.get_size_inches()
     try:
         if width_px and height_px and dpi and width_px > 0 and height_px > 0 and dpi > 0:
@@ -49,17 +54,13 @@ def export_fig_bytes(fig, fmt, width_px=None, height_px=None, dpi=300):
         if fmt.lower() in ("png", "jpg", "jpeg"):
             fig.savefig(buf, format=fmt, dpi=dpi, bbox_inches="tight")
         elif fmt.lower() == "pdf":
-            # PDF is vector; size (inches) matters, dpi generally not.
             fig.savefig(buf, format=fmt, bbox_inches="tight")
         else:
-            # Fallback to default
             fig.savefig(buf, format=fmt, bbox_inches="tight")
         buf.seek(0)
         return buf.getvalue()
     finally:
-        # Always restore original size
         fig.set_size_inches(orig_size_in)
-
 
 # ---- UI ----
 st.set_page_config(page_title="Biomarker Analysis Dashboard", layout="wide")
@@ -94,22 +95,22 @@ if uploaded_file:
     )
 
     p_adjust_methods = [
-    "bonferroni", "holm", "holm-sidak", "sidak",
-    "fdr_bh", "fdr_by", "hochberg", "hommel"
+        "bonferroni", "holm", "holm-sidak", "sidak",
+        "fdr_bh", "fdr_by", "hochberg", "hommel"
     ]
     p_adjust_choice = st.sidebar.selectbox(
         "Select p-value Adjustment Method",
         options=p_adjust_methods,
         index=0  # Varsayılan Bonferroni
     )
-   
+
     group_var = st.sidebar.selectbox("Select Group Variable (categorical)", options=df.columns)
     test_vars = st.sidebar.multiselect("Select Test Variables (numeric)", options=df.columns)
 
     test_choice = st.sidebar.radio("Select Test", ["Auto", "Mann-Whitney U", "Kruskal-Wallis"])
     show_nonsignificant = st.sidebar.checkbox("Show Non-Significant p-values (p > 0.05)", value=False)
 
-    # ---- NEW: Export settings (resolution & DPI) ----
+    # ---- Export settings (resolution & DPI) ----
     with st.sidebar.expander("Export settings (resolution)"):
         export_width_px = st.number_input("Width (pixels)", min_value=200, value=1600, step=50)
         export_height_px = st.number_input("Height (pixels)", min_value=200, value=1200, step=50)
@@ -147,12 +148,12 @@ if uploaded_file:
                 u_stat, p_value = mannwhitneyu(group_data[0], group_data[1], alternative="two-sided")
             else:
                 h_stat, p_value = kruskal(*group_data)
-            
+
             if not show_nonsignificant and p_value > 0.05:
                 p_display = ""
             else:
-                p_display = format_p(p_value)
-           
+                p_display = format_p(p_value)  # <-- formatlı yaz
+
             rows.append([var] + summaries + [p_display])
 
         columns = ["Parameter"] + group_labels + ["p-value"]
@@ -226,7 +227,7 @@ if uploaded_file:
                 ypos = ymax + 0.1 * (ymax if ymax != 0 else 1)
                 ax.plot([0, 0, 1, 1], [ypos, ypos * 1.05, ypos * 1.05, ypos], lw=1.5, c="k")
                 if show_nonsignificant or p_value <= 0.05:
-                    ax.text(0.5, ypos + 0.07*ypos, f"p = {format_p(p_value)}", ha='center', va='bottom')
+                    ax.text(0.5, ypos + 0.07*ypos, format_p_label(p_value), ha='center', va='bottom')  # <-- düzeltildi
             else:
                 h_stat, p_value = kruskal(*group_data)
                 if posthoc_test_choice == "Dunn":
@@ -236,23 +237,25 @@ if uploaded_file:
                         group_col=group_var,
                         p_adjust=p_adjust_choice
                     )
-                pairs = list(itertools.combinations(posthoc.columns, 2))
-                datamax = df_clean[test_var].max()
-                datamin = df_clean[test_var].min()
-                rng = max(datamax - datamin, 1e-9)
-                ypos = datamax + 0.05 * rng
-                spacing = 0.1 * rng
-                visible = 0
-                for (g1, g2) in pairs:
-                    pval = float(posthoc.loc[g1, g2])
-                    if not show_nonsignificant and pval > 0.05:
-                        continue
-                    x1 = group_labels.index(g1)
-                    x2 = group_labels.index(g2)
-                    y = ypos + visible * spacing
-                    ax.plot([x1, x1, x2, x2], [y, y + 0.3 * spacing, y + 0.3 * spacing, y], lw=1.5, c="k")
-                    ax.text((x1 + x2) / 2, y + spacing * 0.35, f"p = {format_p(pval)}", ha='center', va='bottom')
-                    visible += 1
+                    pairs = list(itertools.combinations(posthoc.columns, 2))
+                    datamax = df_clean[test_var].max()
+                    datamin = df_clean[test_var].min()
+                    rng = max(datamax - datamin, 1e-9)
+                    ypos = datamax + 0.05 * rng
+                    spacing = 0.1 * rng
+                    visible = 0
+                    for (g1, g2) in pairs:
+                        pval = float(posthoc.loc[g1, g2])
+                        if not show_nonsignificant and pval > 0.05:
+                            continue
+                        x1 = group_labels.index(g1)
+                        x2 = group_labels.index(g2)
+                        y = ypos + visible * spacing
+                        ax.plot([x1, x1, x2, x2], [y, y + 0.3 * spacing, y + 0.3 * spacing, y], lw=1.5, c="k")
+                        label = format_p_label(pval)  # <-- düzeltildi
+                        if label:
+                            ax.text((x1 + x2) / 2, y + spacing * 0.35, label, ha='center', va='bottom')
+                        visible += 1
 
             # Axis labels & titles
             ax.set_xticks(range(len(group_labels)))
@@ -293,5 +296,3 @@ if uploaded_file:
                 data=pdf_bytes,
                 file_name=f"figure_{export_width_px}x{export_height_px}.pdf"
             )
-
-
