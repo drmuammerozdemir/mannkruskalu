@@ -213,7 +213,13 @@ if uploaded_file:
                     ax.text(0.5, ypos + 0.07*ypos, f"p = {format_p(p_value)}", ha='center', va='bottom')
             else:
                 h_stat, p_value = kruskal(*group_data)
-                posthoc = sp.posthoc_dunn(df_clean, val_col=test_var, group_col=group_var, p_adjust="bonferroni")
+                if posthoc_test_choice == "Dunn":
+                    posthoc = sp.posthoc_dunn(
+                        df_clean,
+                        val_col=test_var,
+                        group_col=group_var,
+                        p_adjust=p_adjust_choice
+                    )
                 pairs = list(itertools.combinations(posthoc.columns, 2))
                 datamax = df_clean[test_var].max()
                 datamin = df_clean[test_var].min()
@@ -271,3 +277,4 @@ if uploaded_file:
                 data=pdf_bytes,
                 file_name=f"figure_{export_width_px}x{export_height_px}.pdf"
             )
+
