@@ -13,6 +13,7 @@ import itertools
 import math
 from io import BytesIO
 
+# ===================== Helpers (formatlama) =====================
 def format_p(p):
     try:
         if pd.isna(p):
@@ -21,28 +22,26 @@ def format_p(p):
     except Exception:
         return ""
 
-# p-etiketi: "<0,001" ise eşittir yok, diğerlerinde "p = x,xxx"
 def format_p_label(p):
     s = format_p(p)
     if not s:
         return ""
     return f"p {s}" if s.startswith("<") else f"p = {s}"
 
-# ---- Helpers ----
+def fmt_num(x, nd=2):
+    try:
+        return f"{x:.{nd}f}".replace(".", ",")
+    except Exception:
+        return ""
+
+# ---- Eski export yardımcıları ----
 def fig_to_bytes(fig, fmt):
-    """Legacy helper (kept for compatibility). Saves current fig as-is."""
     buf = BytesIO()
     fig.savefig(buf, format=fmt, bbox_inches="tight")
     buf.seek(0)
     return buf
 
 def export_fig_bytes(fig, fmt, width_px=None, height_px=None, dpi=300):
-    """
-    Export the given matplotlib figure to bytes with custom pixel size and dpi.
-    We temporarily change the figure size (inches = pixels / dpi) and restore it.
-    - For PNG/JPG: uses dpi and target size.
-    - For PDF: vector; uses size in inches (dpi ignored by PDF backends).
-    """
     orig_size_in = fig.get_size_inches()
     try:
         if width_px and height_px and dpi and width_px > 0 and height_px > 0 and dpi > 0:
@@ -62,7 +61,7 @@ def export_fig_bytes(fig, fmt, width_px=None, height_px=None, dpi=300):
     finally:
         fig.set_size_inches(orig_size_in)
 
-# ---- UI ----
+# ===================== UI =====================
 st.set_page_config(page_title="Biomarker Analysis Dashboard", layout="wide")
 st.title("🔬 Biomarker Analysis Dashboard (.csv, .sav)")
 
@@ -120,51 +119,126 @@ if uploaded_file:
     # ---- Data types ----
     df[group_var] = df[group_var].astype(str)
     group_labels = sorted(df[group_var].dropna().unique())
+    # Grupların toplam n bilgisi (başlıklarda kullanmak için)
+    group_n = {g: int(df[df[group_var] == g].shape[0]) for g in group_labels}
+    group_headers = [f"{g} (n={group_n[g]})" for g in group_labels]
 
-    # ---- Summary Table ----
+    # ===================== SUMMARY TABLE =====================
     if analysis_type == "Summary Table":
+
+        # Özet gösterim biçimi
+        summary_format = st.sidebar.selectbox(
+            "Summary display",
+            options=["Median [IQR]", "Mean ± SD"],
+            index=0
+        )
+
+        # Bölüm ve sıra editörü
+        default_sections = "# Section 1\n" + ("\n".join(test_vars) if test_vars else "")
+        sections_text = st.text_area(
+            "Sections & order (use # for section headers, and 'Column|Label' for alias)",
+            value=default_sections,
+            height=220
+        )
+
+        # Yardımcı: değişken için grup özet stringi
+        def group_summary_str(arr):
+            arr = np.array(arr, dtype=float)
+            arr = arr[~np.isnan(arr)]
+            if arr.size == 0:
+                return ""
+            if summary_format == "Median [IQR]":
+                med = np.median(arr)
+                q1 = np.percentile(arr, 25)
+                q3 = np.percentile(arr, 75)
+                return f"{fmt_num(med)} [{fmt_num(q1)}–{fmt_num(q3)}]"
+            else:
+                mean = np.mean(arr)
+                sd = np.std(arr, ddof=1) if arr.size > 1 else 0.0
+                return f"{fmt_num(mean)} ± {fmt_num(sd)}"
+
+        # Parse lines -> sıra
+        lines = [ln.strip() for ln in sections_text.splitlines() if ln.strip() != ""]
         rows = []
-        for var in test_vars:
-            df_clean = df[[group_var, var]].dropna()
-            df_clean = df_clean[df_clean[group_var].notna()]
-            group_labels = sorted(df_clean[group_var].unique())
-            group_data = [df_clean[df_clean[group_var] == grp][var] for grp in group_labels]
+        header_idx = []  # Stil için bölüm satırlarının indeksleri
 
-            # Per-group summary (median, min-max)
-            summaries = []
-            for g in group_data:
-                med = np.median(g)
-                gmin = np.min(g)
-                gmax = np.max(g)
-                summaries.append(f"{med:.2f} ({gmin:.2f}-{gmax:.2f})")
+        # Kolon başlıkları
+        columns = ["Parameter"] + group_headers + ["p-value"]
 
-            # Auto/Manual test selection
+        for line in lines:
+            if line.startswith("#"):
+                # Bölüm başlığı
+                label = line.lstrip("#").strip()
+                rows.append([label] + [""] * (len(group_headers) + 1))
+                header_idx.append(len(rows) - 1)
+                continue
+
+            # Değişken satırı (alias destekli)
+            if "|" in line:
+                col_name, disp = [p.strip() for p in line.split("|", 1)]
+            else:
+                col_name, disp = line, line
+
+            if col_name not in df.columns:
+                # Kolon yoksa boş satır ekleme (istersen sil)
+                rows.append([f"[Missing: {disp}]"] + [""] * (len(group_headers) + 1))
+                continue
+
+            # Veriyi temizle
+            dsub = df[[group_var, col_name]].dropna()
+            dsub = dsub[dsub[group_var].notna()]
+            # Tüm gruplar için aynı sırayı koru
+            grp_data = [dsub[dsub[group_var] == g][col_name].values for g in group_labels]
+
+            # Özet stringleri
+            summaries = [group_summary_str(arr) for arr in grp_data]
+
+            # Test seçimi
             if test_choice == "Auto":
                 test_to_use = "Mann-Whitney U" if len(group_labels) == 2 else "Kruskal-Wallis"
             else:
                 test_to_use = test_choice
 
+            # p-değeri
             if test_to_use == "Mann-Whitney U" and len(group_labels) == 2:
-                u_stat, p_value = mannwhitneyu(group_data[0], group_data[1], alternative="two-sided")
+                try:
+                    u_stat, p_val = mannwhitneyu(grp_data[0], grp_data[1], alternative="two-sided")
+                except Exception:
+                    p_val = np.nan
             else:
-                h_stat, p_value = kruskal(*group_data)
+                try:
+                    h_stat, p_val = kruskal(*grp_data)
+                except Exception:
+                    p_val = np.nan
 
-            if not show_nonsignificant and p_value > 0.05:
-                p_display = ""
+            if not show_nonsignificant and (pd.isna(p_val) or p_val > 0.05):
+                p_disp = ""
             else:
-                p_display = format_p(p_value)  # <-- formatlı yaz
+                p_disp = format_p(p_val)
 
-            rows.append([var] + summaries + [p_display])
+            rows.append([disp] + summaries + [p_disp])
 
-        columns = ["Parameter"] + group_labels + ["p-value"]
         summary_df = pd.DataFrame(rows, columns=columns)
-        st.dataframe(
-            summary_df.style.format(na_rep="").set_table_styles(
-                [{'selector': 'th', 'props': [('text-align', 'center')]}]
-            )
+
+        # ---------- STYLING (Arial, hizalama, bölüm başlığı kalın/çizgi) ----------
+        def highlight_sections(row):
+            if row.name in header_idx:
+                return ["font-weight: bold; border-top: 1px solid black; background-color: #f7f7f7;"] * len(row)
+            return [""] * len(row)
+
+        styler = (
+            summary_df
+            .style
+            .format(na_rep="")
+            .apply(highlight_sections, axis=1)
+            .set_properties(**{"font-family": "Arial", "font-size": "12pt"})
+            .set_properties(subset=pd.IndexSlice[:, ["Parameter"]], **{"text-align": "left"})
+            .set_properties(subset=pd.IndexSlice[:, group_headers + ["p-value"]], **{"text-align": "right"})
         )
 
-    # ---- Statistical Plots ----
+        st.dataframe(styler, use_container_width=True)
+
+    # ===================== STATISTICAL PLOTS =====================
     if analysis_type == "Statistical Plots":
         title_input = st.text_input("Figure Title", value="Statistical Comparison")
         xaxis_label = st.text_input("X Axis Label", value=group_var)
@@ -189,8 +263,8 @@ if uploaded_file:
         for idx, test_var in enumerate(test_vars):
             df_clean = df[[group_var, test_var]].dropna()
             df_clean = df_clean[df_clean[group_var].notna()]
-            group_labels = sorted(df_clean[group_var].unique())
-            group_data = [df_clean[df_clean[group_var] == grp][test_var] for grp in group_labels]
+            group_labels_plot = sorted(df_clean[group_var].unique())
+            group_data = [df_clean[df_clean[group_var] == grp][test_var] for grp in group_labels_plot]
 
             ax = axes[idx]
             sns.stripplot(
@@ -200,11 +274,11 @@ if uploaded_file:
                 jitter=True,
                 ax=ax,
                 palette=palette_choice,
-                order=group_labels
+                order=group_labels_plot
             )
 
             # Median line + min-max whiskers
-            for i, group in enumerate(group_labels):
+            for i, group in enumerate(group_labels_plot):
                 group_values = df_clean[df_clean[group_var] == group][test_var]
                 center_value = group_values.median()
                 ymin = group_values.min()
@@ -216,18 +290,18 @@ if uploaded_file:
 
             # Decide test
             if test_choice == "Auto":
-                test_to_use = "Mann-Whitney U" if len(group_labels) == 2 else "Kruskal-Wallis"
+                test_to_use = "Mann-Whitney U" if len(group_labels_plot) == 2 else "Kruskal-Wallis"
             else:
                 test_to_use = test_choice
 
             # p-values + brackets
-            if test_to_use == "Mann-Whitney U" and len(group_labels) == 2:
+            if test_to_use == "Mann-Whitney U" and len(group_labels_plot) == 2:
                 u_stat, p_value = mannwhitneyu(group_data[0], group_data[1], alternative="two-sided")
                 ymax = df_clean[test_var].max()
                 ypos = ymax + 0.1 * (ymax if ymax != 0 else 1)
                 ax.plot([0, 0, 1, 1], [ypos, ypos * 1.05, ypos * 1.05, ypos], lw=1.5, c="k")
                 if show_nonsignificant or p_value <= 0.05:
-                    ax.text(0.5, ypos + 0.07*ypos, format_p_label(p_value), ha='center', va='bottom')  # <-- düzeltildi
+                    ax.text(0.5, ypos + 0.07*ypos, format_p_label(p_value), ha='center', va='bottom')
             else:
                 h_stat, p_value = kruskal(*group_data)
                 if posthoc_test_choice == "Dunn":
@@ -248,18 +322,18 @@ if uploaded_file:
                         pval = float(posthoc.loc[g1, g2])
                         if not show_nonsignificant and pval > 0.05:
                             continue
-                        x1 = group_labels.index(g1)
-                        x2 = group_labels.index(g2)
+                        x1 = group_labels_plot.index(g1)
+                        x2 = group_labels_plot.index(g2)
                         y = ypos + visible * spacing
                         ax.plot([x1, x1, x2, x2], [y, y + 0.3 * spacing, y + 0.3 * spacing, y], lw=1.5, c="k")
-                        label = format_p_label(pval)  # <-- düzeltildi
+                        label = format_p_label(pval)
                         if label:
                             ax.text((x1 + x2) / 2, y + spacing * 0.35, label, ha='center', va='bottom')
                         visible += 1
 
             # Axis labels & titles
-            ax.set_xticks(range(len(group_labels)))
-            ax.set_xticklabels(custom_labels if custom_labels else group_labels)
+            ax.set_xticks(range(len(group_labels_plot)))
+            ax.set_xticklabels(custom_labels if custom_labels else group_labels_plot)
             subtitle = subplot_titles[idx] if idx < len(subplot_titles) else test_var
             ax.set_title(subtitle)
             ax.set_xlabel(xaxis_label)
