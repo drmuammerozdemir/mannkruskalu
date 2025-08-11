@@ -87,6 +87,22 @@ if uploaded_file:
     palette_options = ["deep", "muted", "bright", "pastel", "dark", "colorblind"]
     palette_choice = st.sidebar.selectbox("Color Palette", options=palette_options)
 
+    # ---- Post-hoc ve düzeltme yöntemi seçimi ----
+    posthoc_test_choice = st.sidebar.selectbox(
+        "Select Post-hoc Test",
+        options=["Dunn"]  # İleride diğer testler eklenebilir
+    )
+
+    p_adjust_methods = [
+    "bonferroni", "holm", "holm-sidak", "sidak",
+    "fdr_bh", "fdr_by", "hochberg", "hommel"
+    ]
+    p_adjust_choice = st.sidebar.selectbox(
+        "Select p-value Adjustment Method",
+        options=p_adjust_methods,
+        index=0  # Varsayılan Bonferroni
+    )
+   
     group_var = st.sidebar.selectbox("Select Group Variable (categorical)", options=df.columns)
     test_vars = st.sidebar.multiselect("Select Test Variables (numeric)", options=df.columns)
 
@@ -277,4 +293,5 @@ if uploaded_file:
                 data=pdf_bytes,
                 file_name=f"figure_{export_width_px}x{export_height_px}.pdf"
             )
+
 
