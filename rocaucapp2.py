@@ -75,7 +75,7 @@ def binary_summary_n_pct(s: pd.Series, present_code: int = 1) -> str:
     return f"{n1} ({pct:.1f}%)".replace(".", ",")
 
 def chi2_rx2(dsub: pd.DataFrame, group_var: str, col_name: str,
-             present_code: int = 1, monte_carlo_B: int | None = None, seed: int = 42):
+             present_code: int = 1, monte_carlo_B: int = None, seed: int = 42):
     """
     Rx2 (örn. 4x2) tablo için Pearson ki-kare p-değeri (gerekirse 2x2'de Fisher/Yates),
     opsiyonel Monte Carlo p ve Cramér's V döndürür.
@@ -83,6 +83,9 @@ def chi2_rx2(dsub: pd.DataFrame, group_var: str, col_name: str,
     g = dsub[group_var].astype(str)
     x = pd.to_numeric(dsub[col_name], errors="coerce")
     d = pd.DataFrame({group_var: g, col_name: x}).dropna()
+    if d.empty:
+        return np.nan, "Chi-square (Pearson)", np.nan, pd.DataFrame()
+
     g = d[group_var]
     x = d[col_name]
 
@@ -110,12 +113,12 @@ def chi2_rx2(dsub: pd.DataFrame, group_var: str, col_name: str,
         chi2_obs = chi2
         x01_vals = x01.values
         g_vals = g.values
-        for _ in range(monte_carlo_B):
+        for _ in range(int(monte_carlo_B)):
             perm = rng.permutation(x01_vals)
             t = pd.crosstab(g_vals, perm).reindex(columns=[0, 1], fill_value=0).values
             chi2_perm = chi2_contingency(t, correction=False)[0]
             ge += (chi2_perm >= chi2_obs)
-        p = (ge + 1) / (monte_carlo_B + 1)
+        p = (ge + 1) / (int(monte_carlo_B) + 1)
         method = "Chi-square (Monte Carlo p)"
 
     # Cramér's V
@@ -168,7 +171,7 @@ if uploaded_file:
     group_var = st.sidebar.selectbox("Select Group Variable (categorical)", options=df.columns)
     test_vars = st.sidebar.multiselect("Select Test Variables (numeric or binary)", options=df.columns)
 
-    test_choice = st.sidebar.radio("Select Test", ["Auto", "Mann-Whitney U", "Kruskal-Wallis"])
+    test_choice = st.sidebar.radio("Default omnibus test (for continuous)", ["Auto", "Mann-Whitney U", "Kruskal-Wallis"])
     show_nonsignificant = st.sidebar.checkbox("Show Non-Significant p-values (p > 0.05)", value=False)
 
     # ---- Export settings (resolution & DPI) ----
@@ -178,10 +181,15 @@ if uploaded_file:
         export_dpi = st.number_input("DPI", min_value=72, value=300, step=1,
                                      help="For PNG/JPG. PDF ignores DPI (vector).")
 
+    # ---- Binary ayarları ----
+    with st.sidebar.expander("Binary settings (0/1, 1/2)"):
+        present_code_ui = st.selectbox("Code that means 'present' (var=1)", options=[1, 2], index=1 if 2 in df.columns else 0)
+        use_mc = st.checkbox("Use Monte Carlo p for Rx2 if sparse", value=False)
+        mc_B = st.number_input("Permutations (B)", min_value=1000, value=20000, step=1000)
+
     # ---- Data types ----
     df[group_var] = df[group_var].astype(str)
     group_labels = sorted(df[group_var].dropna().unique())
-    # Grupların toplam n bilgisi (başlıklarda kullanmak için)
     group_n = {g: int(df[df[group_var] == g].shape[0]) for g in group_labels}
     group_headers = [f"{g} (n={group_n[g]})" for g in group_labels]
 
@@ -195,12 +203,6 @@ if uploaded_file:
             options=AVAILABLE_SUMMARY_FORMATS,
             index=0
         )
-
-        # ---- Binary ayarları ----
-        with st.sidebar.expander("Binary settings (0/1, 1/2)"):
-            present_code_ui = st.selectbox("Code that means 'present' (var=1)", options=[1, 2], index=0)
-            use_mc = st.checkbox("Use Monte Carlo p for Rx2 if sparse", value=False)
-            mc_B = st.number_input("Permutations (B)", min_value=1000, value=20000, step=1000)
 
         # Bölüm ve sıra editörü
         default_sections = "# Section 1\n" + ("\n".join(test_vars) if test_vars else "")
@@ -249,25 +251,59 @@ if uploaded_file:
                 col_name, disp = line, line
             items.append({"type": "var", "name": col_name, "label": disp})
 
-        # ---------- Sağ panel: Değişken başına özet biçimi seçimi ----------
+        # ---------- Sağ panel: Per-variable display + test seçimi ----------
         planned_vars = [it["name"] for it in items if it["type"] == "var" and it["name"] in df.columns]
 
         if "var_fmt" not in st.session_state:
             st.session_state["var_fmt"] = {}
-        # Varsayılanı uygula (eksikler için)
+        if "var_test" not in st.session_state:
+            st.session_state["var_test"] = {}
+
         for v in planned_vars:
             st.session_state["var_fmt"].setdefault(v, summary_format)
+            st.session_state["var_test"].setdefault(v, "Auto")
 
         table_col, cfg_col = st.columns([3, 1], gap="large")
         with cfg_col:
-            st.markdown("**Per-variable display**")
+            st.markdown("**Per-variable settings**")
             for v in planned_vars:
-                key = f"fmt_{hash(v)}"
-                current = st.session_state["var_fmt"].get(v, summary_format)
-                sel = st.selectbox(v, AVAILABLE_SUMMARY_FORMATS,
-                                   index=AVAILABLE_SUMMARY_FORMATS.index(current),
-                                   key=key)
-                st.session_state["var_fmt"][v] = sel
+                key_fmt = f"fmt_{hash(v)}"
+                current_fmt = st.session_state["var_fmt"].get(v, summary_format)
+                st.session_state["var_fmt"][v] = st.selectbox(
+                    f"{v} — display", AVAILABLE_SUMMARY_FORMATS,
+                    index=AVAILABLE_SUMMARY_FORMATS.index(current_fmt),
+                    key=key_fmt
+                )
+
+                # Test seçenekleri, değişken tipine ve grup sayısına göre
+                is_bin = is_binary_like(df[v])
+                if is_bin and len(group_labels) == 2:
+                    test_opts = ["Auto", "Chi-square", "Fisher exact", "Mann-Whitney U"]
+                elif is_bin and len(group_labels) > 2:
+                    test_opts = ["Auto", "Chi-square", "Kruskal-Wallis"]  # Fisher 2x2 içindir
+                else:
+                    # Sürekli değişken
+                    test_opts = ["Auto", "Mann-Whitney U", "Kruskal-Wallis"]
+
+                key_test = f"test_{hash(v)}"
+                cur_test = st.session_state["var_test"].get(v, "Auto")
+                if cur_test not in test_opts:
+                    cur_test = "Auto"
+                st.session_state["var_test"][v] = st.selectbox(
+                    f"{v} — test", test_opts,
+                    index=test_opts.index(cur_test),
+                    key=key_test
+                )
+
+        # ---------- Üstsimge (a,b,c,...) atama için yardımcılar ----------
+        supers = ['ᵃ','ᵇ','ᶜ','ᵈ','ᵉ','ᶠ','ᵍ','ʰ','ᶦ','ʲ','ᵏ','ˡ','ᵐ','ⁿ','ᵒ','ᵖ','ʳ','ˢ','ᵗ','ᵘ','ᵛ','ʷ','ˣ','ʸ','ᶻ']
+        method_notes = {}  # method_label -> superscript
+        def note_for(method_label: str):
+            if not method_label:
+                return ""
+            if method_label not in method_notes:
+                method_notes[method_label] = supers[len(method_notes) % len(supers)]
+            return method_notes[method_label]
 
         # ---------- Tabloyu oluştur ----------
         rows = []
@@ -291,52 +327,115 @@ if uploaded_file:
                 dsub = df[[group_var, col_name]].dropna()
                 dsub = dsub[dsub[group_var].notna()]
                 grp_data = [dsub[dsub[group_var] == g][col_name].values for g in group_labels]
+                is_bin = is_binary_like(dsub[col_name])
 
-                # --- İKİLİ DEĞİŞKEN (0/1 veya 1/2) ---
-                if is_binary_like(dsub[col_name]):
+                # Özet
+                if is_bin:
                     present_code = int(present_code_ui)
-
-                    # Özet: n (% var)
                     summaries = []
                     for gname in group_labels:
                         s_grp = dsub.loc[dsub[group_var] == gname, col_name]
                         summaries.append(binary_summary_n_pct(s_grp, present_code))
-
-                    # Omnibus p: Rx2 ki-kare (opsiyonel Monte Carlo p)
-                    p_val, p_method, V, _ = chi2_rx2(
-                        dsub, group_var, col_name,
-                        present_code=present_code,
-                        monte_carlo_B=int(mc_B) if use_mc else None
-                    )
-
                 else:
-                    # Sürekli/ordinal özet
                     fmt_for_var = st.session_state["var_fmt"].get(col_name, summary_format)
                     summaries = [group_summary_str(arr, fmt_for_var) for arr in grp_data]
 
-                    # Test seçimi
-                    if test_choice == "Auto":
-                        test_to_use = "Mann-Whitney U" if len(group_labels) == 2 else "Kruskal-Wallis"
-                    else:
-                        test_to_use = test_choice
+                # ---- Test seçimi (elle/Auto) ve p ----
+                chosen_test = st.session_state["var_test"].get(col_name, "Auto")
+                p_val = np.nan
+                method_label = ""
 
-                    # p-değeri
-                    if test_to_use == "Mann-Whitney U" and len(group_labels) == 2:
+                if is_bin:
+                    # Binary veri
+                    if chosen_test == "Auto" or chosen_test == "Chi-square":
+                        p_val, method_label, _, _ = chi2_rx2(
+                            dsub, group_var, col_name,
+                            present_code=int(present_code_ui),
+                            monte_carlo_B=int(mc_B) if use_mc else None
+                        )
+                    elif chosen_test == "Fisher exact":
+                        # 2x2 şart
+                        if len(group_labels) == 2:
+                            # Fisher exact
+                            x = pd.to_numeric(dsub[col_name], errors="coerce")
+                            tab = pd.crosstab(dsub[group_var].astype(str), (x == int(present_code_ui)).astype(int)).reindex(columns=[0,1], fill_value=0).values
+                            try:
+                                _, p_val = fisher_exact(tab)
+                                method_label = "Fisher exact"
+                            except Exception:
+                                p_val = np.nan
+                                method_label = "Fisher exact (not applicable)"
+                        else:
+                            p_val = np.nan
+                            method_label = "Fisher exact (not applicable)"
+                    elif chosen_test == "Mann-Whitney U":
+                        if len(group_labels) == 2:
+                            try:
+                                x0 = pd.to_numeric(grp_data[0], errors="coerce")
+                                x1 = pd.to_numeric(grp_data[1], errors="coerce")
+                                _, p_val = mannwhitneyu(x0, x1, alternative="two-sided")
+                                method_label = "Mann–Whitney U"
+                            except Exception:
+                                p_val = np.nan
+                                method_label = "Mann–Whitney U"
+                        else:
+                            p_val = np.nan
+                            method_label = "Mann–Whitney U (not applicable)"
+                    elif chosen_test == "Kruskal-Wallis":
                         try:
-                            _, p_val = mannwhitneyu(grp_data[0], grp_data[1], alternative="two-sided")
+                            arrays = [pd.to_numeric(a, errors="coerce") for a in grp_data]
+                            _, p_val = kruskal(*arrays)
+                            method_label = "Kruskal–Wallis"
                         except Exception:
                             p_val = np.nan
-                    else:
+                            method_label = "Kruskal–Wallis"
+                else:
+                    # Sürekli/ordinal veri
+                    if chosen_test == "Auto":
+                        if len(group_labels) == 2:
+                            chosen_test_eff = "Mann–Whitney U"
+                            try:
+                                _, p_val = mannwhitneyu(grp_data[0], grp_data[1], alternative="two-sided")
+                            except Exception:
+                                p_val = np.nan
+                        else:
+                            chosen_test_eff = "Kruskal–Wallis"
+                            try:
+                                _, p_val = kruskal(*grp_data)
+                            except Exception:
+                                p_val = np.nan
+                        method_label = chosen_test_eff
+                    elif chosen_test == "Mann-Whitney U":
+                        if len(group_labels) == 2:
+                            try:
+                                _, p_val = mannwhitneyu(grp_data[0], grp_data[1], alternative="two-sided")
+                            except Exception:
+                                p_val = np.nan
+                            method_label = "Mann–Whitney U"
+                        else:
+                            p_val = np.nan
+                            method_label = "Mann–Whitney U (not applicable)"
+                    elif chosen_test == "Kruskal-Wallis":
                         try:
                             _, p_val = kruskal(*grp_data)
                         except Exception:
                             p_val = np.nan
+                        method_label = "Kruskal–Wallis"
+                    elif chosen_test == "Chi-square":
+                        p_val = np.nan
+                        method_label = "Chi-square (not applicable)"
+                    elif chosen_test == "Fisher exact":
+                        p_val = np.nan
+                        method_label = "Fisher exact (not applicable)"
 
-                # p yazdırma
+                # p yazdırma + üstsimge
                 if not show_nonsignificant and (pd.isna(p_val) or p_val > 0.05):
                     p_disp = ""
                 else:
                     p_disp = format_p(p_val)
+                    if p_disp:
+                        sup = note_for(method_label)
+                        p_disp = p_disp + sup
 
                 rows.append([disp] + summaries + [p_disp])
 
@@ -359,6 +458,15 @@ if uploaded_file:
             )
 
             st.dataframe(styler, use_container_width=True)
+
+            # ---------- Dipnotlar ----------
+            if method_notes:
+                lines = []
+                # Kullanıcıya anlaşılır dipnotlar
+                for label, sup in method_notes.items():
+                    nice = label.replace("--", "–")
+                    lines.append(f"{sup} {nice}")
+                st.markdown("**Notes:**  \n" + "  \n".join(lines))
 
     # ===================== STATISTICAL PLOTS =====================
     if analysis_type == "Statistical Plots":
