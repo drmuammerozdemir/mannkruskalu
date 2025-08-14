@@ -126,10 +126,11 @@ if uploaded_file:
     # ===================== SUMMARY TABLE =====================
     if analysis_type == "Summary Table":
 
-        # Özet gösterim biçimi
+        # --- Özet biçimleri (GLOBAL varsayılan + per-variable) ---
+        AVAILABLE_SUMMARY_FORMATS = ["Median [IQR]", "Mean ± SD", "Median [Min–Max]"]
         summary_format = st.sidebar.selectbox(
-            "Summary display",
-            options=["Median [IQR]", "Mean ± SD"],
+            "Default summary display",
+            options=AVAILABLE_SUMMARY_FORMATS,
             index=0
         )
 
@@ -141,102 +142,138 @@ if uploaded_file:
             height=220
         )
 
-        # Yardımcı: değişken için grup özet stringi
-        def group_summary_str(arr):
+        # ---------- Yardımcı: seçilen formata göre grup özet stringi ----------
+        def group_summary_str(arr, fmt):
             arr = np.array(arr, dtype=float)
             arr = arr[~np.isnan(arr)]
             if arr.size == 0:
                 return ""
-            if summary_format == "Median [IQR]":
+            if fmt == "Median [IQR]":
                 med = np.median(arr)
                 q1 = np.percentile(arr, 25)
                 q3 = np.percentile(arr, 75)
                 return f"{fmt_num(med)} [{fmt_num(q1)}–{fmt_num(q3)}]"
-            else:
+            elif fmt == "Mean ± SD":
                 mean = np.mean(arr)
                 sd = np.std(arr, ddof=1) if arr.size > 1 else 0.0
                 return f"{fmt_num(mean)} ± {fmt_num(sd)}"
+            elif fmt == "Median [Min–Max]":
+                med = np.median(arr)
+                mn = np.min(arr)
+                mx = np.max(arr)
+                return f"{fmt_num(med)} [{fmt_num(mn)}–{fmt_num(mx)}]"
+            else:
+                # fallback
+                med = np.median(arr)
+                q1 = np.percentile(arr, 25)
+                q3 = np.percentile(arr, 75)
+                return f"{fmt_num(med)} [{fmt_num(q1)}–{fmt_num(q3)}]"
 
-        # Parse lines -> sıra
+        # ---------- Parse lines (section titles & variables) ----------
         lines = [ln.strip() for ln in sections_text.splitlines() if ln.strip() != ""]
-        rows = []
-        header_idx = []  # Stil için bölüm satırlarının indeksleri
-
-        # Kolon başlıkları
-        columns = ["Parameter"] + group_headers + ["p-value"]
-
+        items = []  # [{'type':'header','label':...} or {'type':'var','name':..., 'label':...}]
         for line in lines:
             if line.startswith("#"):
-                # Bölüm başlığı
-                label = line.lstrip("#").strip()
-                rows.append([label] + [""] * (len(group_headers) + 1))
-                header_idx.append(len(rows) - 1)
+                items.append({"type": "header", "label": line.lstrip("#").strip()})
                 continue
-
-            # Değişken satırı (alias destekli)
             if "|" in line:
                 col_name, disp = [p.strip() for p in line.split("|", 1)]
             else:
                 col_name, disp = line, line
+            items.append({"type": "var", "name": col_name, "label": disp})
 
-            if col_name not in df.columns:
-                # Kolon yoksa boş satır ekleme (istersen sil)
-                rows.append([f"[Missing: {disp}]"] + [""] * (len(group_headers) + 1))
-                continue
+        # ---------- Sağ panel: Değişken başına özet biçimi seçimi ----------
+        planned_vars = [it["name"] for it in items if it["type"] == "var" and it["name"] in df.columns]
 
-            # Veriyi temizle
-            dsub = df[[group_var, col_name]].dropna()
-            dsub = dsub[dsub[group_var].notna()]
-            # Tüm gruplar için aynı sırayı koru
-            grp_data = [dsub[dsub[group_var] == g][col_name].values for g in group_labels]
+        if "var_fmt" not in st.session_state:
+            st.session_state["var_fmt"] = {}
+        # Varsayılanı uygula (eksikler için)
+        for v in planned_vars:
+            st.session_state["var_fmt"].setdefault(v, summary_format)
 
-            # Özet stringleri
-            summaries = [group_summary_str(arr) for arr in grp_data]
+        table_col, cfg_col = st.columns([3, 1], gap="large")
+        with cfg_col:
+            st.markdown("**Per-variable display**")
+            for v in planned_vars:
+                # her selectbox için benzersiz key
+                key = f"fmt_{hash(v)}"
+                current = st.session_state["var_fmt"].get(v, summary_format)
+                sel = st.selectbox(v, AVAILABLE_SUMMARY_FORMATS,
+                                   index=AVAILABLE_SUMMARY_FORMATS.index(current),
+                                   key=key)
+                st.session_state["var_fmt"][v] = sel
 
-            # Test seçimi
-            if test_choice == "Auto":
-                test_to_use = "Mann-Whitney U" if len(group_labels) == 2 else "Kruskal-Wallis"
-            else:
-                test_to_use = test_choice
+        # ---------- Tabloyu oluştur ----------
+        rows = []
+        header_idx = []  # Stil için bölüm satır indeksleri
+        columns = ["Parameter"] + group_headers + ["p-value"]
 
-            # p-değeri
-            if test_to_use == "Mann-Whitney U" and len(group_labels) == 2:
-                try:
-                    u_stat, p_val = mannwhitneyu(grp_data[0], grp_data[1], alternative="two-sided")
-                except Exception:
-                    p_val = np.nan
-            else:
-                try:
-                    h_stat, p_val = kruskal(*grp_data)
-                except Exception:
-                    p_val = np.nan
+        with table_col:
+            for it in items:
+                if it["type"] == "header":
+                    rows.append([it["label"]] + [""] * (len(group_headers) + 1))
+                    header_idx.append(len(rows) - 1)
+                    continue
 
-            if not show_nonsignificant and (pd.isna(p_val) or p_val > 0.05):
-                p_disp = ""
-            else:
-                p_disp = format_p(p_val)
+                col_name = it["name"]
+                disp = it["label"]
 
-            rows.append([disp] + summaries + [p_disp])
+                if col_name not in df.columns:
+                    rows.append([f"[Missing: {disp}]"] + [""] * (len(group_headers) + 1))
+                    continue
 
-        summary_df = pd.DataFrame(rows, columns=columns)
+                dsub = df[[group_var, col_name]].dropna()
+                dsub = dsub[dsub[group_var].notna()]
+                grp_data = [dsub[dsub[group_var] == g][col_name].values for g in group_labels]
 
-        # ---------- STYLING (Arial, hizalama, bölüm başlığı kalın/çizgi) ----------
-        def highlight_sections(row):
-            if row.name in header_idx:
-                return ["font-weight: bold; border-top: 1px solid black; background-color: #f7f7f7;"] * len(row)
-            return [""] * len(row)
+                # Bu değişken için seçilmiş (veya varsayılan) özet biçimi
+                fmt_for_var = st.session_state["var_fmt"].get(col_name, summary_format)
 
-        styler = (
-            summary_df
-            .style
-            .format(na_rep="")
-            .apply(highlight_sections, axis=1)
-            .set_properties(**{"font-family": "Arial", "font-size": "12pt"})
-            .set_properties(subset=pd.IndexSlice[:, ["Parameter"]], **{"text-align": "left"})
-            .set_properties(subset=pd.IndexSlice[:, group_headers + ["p-value"]], **{"text-align": "right"})
-        )
+                summaries = [group_summary_str(arr, fmt_for_var) for arr in grp_data]
 
-        st.dataframe(styler, use_container_width=True)
+                # Test seçimi (p)
+                if test_choice == "Auto":
+                    test_to_use = "Mann-Whitney U" if len(group_labels) == 2 else "Kruskal-Wallis"
+                else:
+                    test_to_use = test_choice
+
+                if test_to_use == "Mann-Whitney U" and len(group_labels) == 2:
+                    try:
+                        u_stat, p_val = mannwhitneyu(grp_data[0], grp_data[1], alternative="two-sided")
+                    except Exception:
+                        p_val = np.nan
+                else:
+                    try:
+                        h_stat, p_val = kruskal(*grp_data)
+                    except Exception:
+                        p_val = np.nan
+
+                if not show_nonsignificant and (pd.isna(p_val) or p_val > 0.05):
+                    p_disp = ""
+                else:
+                    p_disp = format_p(p_val)
+
+                rows.append([disp] + summaries + [p_disp])
+
+            summary_df = pd.DataFrame(rows, columns=columns)
+
+            # ---------- STYLING (Arial, hizalama, bölüm başlığı kalın/çizgi) ----------
+            def highlight_sections(row):
+                if row.name in header_idx:
+                    return ["font-weight: bold; border-top: 1px solid black; background-color: #f7f7f7;"] * len(row)
+                return [""] * len(row)
+
+            styler = (
+                summary_df
+                .style
+                .format(na_rep="")
+                .apply(highlight_sections, axis=1)
+                .set_properties(**{"font-family": "Arial", "font-size": "12pt"})
+                .set_properties(subset=pd.IndexSlice[:, ["Parameter"]], **{"text-align": "left"})
+                .set_properties(subset=pd.IndexSlice[:, group_headers + ["p-value"]], **{"text-align": "right"})
+            )
+
+            st.dataframe(styler, use_container_width=True)
 
     # ===================== STATISTICAL PLOTS =====================
     if analysis_type == "Statistical Plots":
