@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from scipy.stats import spearmanr, kruskal, shapiro, levene, mannwhitneyu
+from scipy.stats import spearmanr, kruskal, shapiro, levene, mannwhitneyu, chi2_contingency, fisher_exact
 import statsmodels.api as sm
 from statsmodels.formula.api import ols
 import scikit_posthocs as sp
@@ -61,6 +61,69 @@ def export_fig_bytes(fig, fmt, width_px=None, height_px=None, dpi=300):
     finally:
         fig.set_size_inches(orig_size_in)
 
+# ===================== Binary (0/1, 1/2) yardımcıları =====================
+def is_binary_like(s: pd.Series) -> bool:
+    vals = pd.to_numeric(s, errors="coerce").dropna().unique()
+    sv = set(vals)
+    return sv.issubset({0, 1}) or sv.issubset({1, 2})
+
+def binary_summary_n_pct(s: pd.Series, present_code: int = 1) -> str:
+    x = pd.to_numeric(s, errors="coerce")
+    n = int(x.notna().sum())
+    n1 = int((x == present_code).sum())
+    pct = (n1 / n * 100) if n > 0 else 0.0
+    return f"{n1} ({pct:.1f}%)".replace(".", ",")
+
+def chi2_rx2(dsub: pd.DataFrame, group_var: str, col_name: str,
+             present_code: int = 1, monte_carlo_B: int | None = None, seed: int = 42):
+    """
+    Rx2 (örn. 4x2) tablo için Pearson ki-kare p-değeri (gerekirse 2x2'de Fisher/Yates),
+    opsiyonel Monte Carlo p ve Cramér's V döndürür.
+    """
+    g = dsub[group_var].astype(str)
+    x = pd.to_numeric(dsub[col_name], errors="coerce")
+    d = pd.DataFrame({group_var: g, col_name: x}).dropna()
+    g = d[group_var]
+    x = d[col_name]
+
+    x01 = (x == present_code).astype(int)
+    tab = pd.crosstab(g, x01).reindex(columns=[0, 1], fill_value=0)
+    obs = tab.values
+    n = obs.sum()
+
+    chi2, p, dof, exp = chi2_contingency(obs, correction=False)
+    method = "Chi-square (Pearson)"
+
+    # 2x2 özel durum: küçük beklenen varsa Fisher, değilse Yates
+    if obs.shape == (2, 2):
+        if (exp < 5).any():
+            _, p = fisher_exact(obs)
+            method = "Fisher exact"
+        else:
+            chi2, p, _, _ = chi2_contingency(obs, correction=True)
+            method = "Chi-square (Yates)"
+
+    # Rx2 ve çok seyrek tabloysa Monte Carlo p (opsiyonel)
+    elif monte_carlo_B:
+        rng = np.random.default_rng(seed)
+        ge = 0
+        chi2_obs = chi2
+        x01_vals = x01.values
+        g_vals = g.values
+        for _ in range(monte_carlo_B):
+            perm = rng.permutation(x01_vals)
+            t = pd.crosstab(g_vals, perm).reindex(columns=[0, 1], fill_value=0).values
+            chi2_perm = chi2_contingency(t, correction=False)[0]
+            ge += (chi2_perm >= chi2_obs)
+        p = (ge + 1) / (monte_carlo_B + 1)
+        method = "Chi-square (Monte Carlo p)"
+
+    # Cramér's V
+    r, c = obs.shape
+    k = min(r - 1, c - 1)
+    V = np.sqrt(chi2 / (n * k)) if k > 0 and n > 0 else np.nan
+    return p, method, V, tab
+
 # ===================== UI =====================
 st.set_page_config(page_title="Biomarker Analysis Dashboard", layout="wide")
 st.title("🔬 Biomarker Analysis Dashboard (.csv, .sav)")
@@ -92,7 +155,6 @@ if uploaded_file:
         "Select Post-hoc Test",
         options=["Dunn"]  # İleride diğer testler eklenebilir
     )
-
     p_adjust_methods = [
         "bonferroni", "holm", "holm-sidak", "sidak",
         "fdr_bh", "fdr_by", "hochberg", "hommel"
@@ -104,7 +166,7 @@ if uploaded_file:
     )
 
     group_var = st.sidebar.selectbox("Select Group Variable (categorical)", options=df.columns)
-    test_vars = st.sidebar.multiselect("Select Test Variables (numeric)", options=df.columns)
+    test_vars = st.sidebar.multiselect("Select Test Variables (numeric or binary)", options=df.columns)
 
     test_choice = st.sidebar.radio("Select Test", ["Auto", "Mann-Whitney U", "Kruskal-Wallis"])
     show_nonsignificant = st.sidebar.checkbox("Show Non-Significant p-values (p > 0.05)", value=False)
@@ -133,6 +195,12 @@ if uploaded_file:
             options=AVAILABLE_SUMMARY_FORMATS,
             index=0
         )
+
+        # ---- Binary ayarları ----
+        with st.sidebar.expander("Binary settings (0/1, 1/2)"):
+            present_code_ui = st.selectbox("Code that means 'present' (var=1)", options=[1, 2], index=0)
+            use_mc = st.checkbox("Use Monte Carlo p for Rx2 if sparse", value=False)
+            mc_B = st.number_input("Permutations (B)", min_value=1000, value=20000, step=1000)
 
         # Bölüm ve sıra editörü
         default_sections = "# Section 1\n" + ("\n".join(test_vars) if test_vars else "")
@@ -163,7 +231,6 @@ if uploaded_file:
                 mx = np.max(arr)
                 return f"{fmt_num(med)} [{fmt_num(mn)}–{fmt_num(mx)}]"
             else:
-                # fallback
                 med = np.median(arr)
                 q1 = np.percentile(arr, 25)
                 q3 = np.percentile(arr, 75)
@@ -195,7 +262,6 @@ if uploaded_file:
         with cfg_col:
             st.markdown("**Per-variable display**")
             for v in planned_vars:
-                # her selectbox için benzersiz key
                 key = f"fmt_{hash(v)}"
                 current = st.session_state["var_fmt"].get(v, summary_format)
                 sel = st.selectbox(v, AVAILABLE_SUMMARY_FORMATS,
@@ -226,28 +292,47 @@ if uploaded_file:
                 dsub = dsub[dsub[group_var].notna()]
                 grp_data = [dsub[dsub[group_var] == g][col_name].values for g in group_labels]
 
-                # Bu değişken için seçilmiş (veya varsayılan) özet biçimi
-                fmt_for_var = st.session_state["var_fmt"].get(col_name, summary_format)
+                # --- İKİLİ DEĞİŞKEN (0/1 veya 1/2) ---
+                if is_binary_like(dsub[col_name]):
+                    present_code = int(present_code_ui)
 
-                summaries = [group_summary_str(arr, fmt_for_var) for arr in grp_data]
+                    # Özet: n (% var)
+                    summaries = []
+                    for gname in group_labels:
+                        s_grp = dsub.loc[dsub[group_var] == gname, col_name]
+                        summaries.append(binary_summary_n_pct(s_grp, present_code))
 
-                # Test seçimi (p)
-                if test_choice == "Auto":
-                    test_to_use = "Mann-Whitney U" if len(group_labels) == 2 else "Kruskal-Wallis"
+                    # Omnibus p: Rx2 ki-kare (opsiyonel Monte Carlo p)
+                    p_val, p_method, V, _ = chi2_rx2(
+                        dsub, group_var, col_name,
+                        present_code=present_code,
+                        monte_carlo_B=int(mc_B) if use_mc else None
+                    )
+
                 else:
-                    test_to_use = test_choice
+                    # Sürekli/ordinal özet
+                    fmt_for_var = st.session_state["var_fmt"].get(col_name, summary_format)
+                    summaries = [group_summary_str(arr, fmt_for_var) for arr in grp_data]
 
-                if test_to_use == "Mann-Whitney U" and len(group_labels) == 2:
-                    try:
-                        u_stat, p_val = mannwhitneyu(grp_data[0], grp_data[1], alternative="two-sided")
-                    except Exception:
-                        p_val = np.nan
-                else:
-                    try:
-                        h_stat, p_val = kruskal(*grp_data)
-                    except Exception:
-                        p_val = np.nan
+                    # Test seçimi
+                    if test_choice == "Auto":
+                        test_to_use = "Mann-Whitney U" if len(group_labels) == 2 else "Kruskal-Wallis"
+                    else:
+                        test_to_use = test_choice
 
+                    # p-değeri
+                    if test_to_use == "Mann-Whitney U" and len(group_labels) == 2:
+                        try:
+                            _, p_val = mannwhitneyu(grp_data[0], grp_data[1], alternative="two-sided")
+                        except Exception:
+                            p_val = np.nan
+                    else:
+                        try:
+                            _, p_val = kruskal(*grp_data)
+                        except Exception:
+                            p_val = np.nan
+
+                # p yazdırma
                 if not show_nonsignificant and (pd.isna(p_val) or p_val > 0.05):
                     p_disp = ""
                 else:
