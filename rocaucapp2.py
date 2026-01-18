@@ -490,13 +490,40 @@ if uploaded_file:
         axes = np.array(axes).reshape(-1)
         fig.subplots_adjust(hspace=0.4, wspace=0.3)
 
+# ... (kodun üst kısımları aynı) ...
+
         for idx, test_var in enumerate(test_vars):
-            df_clean = df[[group_var, test_var]].dropna()
+            # --- DÜZELTME BAŞLANGICI ---
+            
+            # 1. Önce veriyi temizle: Virgülleri noktaya çevir (Türkiye formatı sorunu için)
+            # ve zorla sayısala çevir (pd.to_numeric). Sayı olmayanlar NaN olur.
+            numeric_series = pd.to_numeric(
+                df[test_var].astype(str).str.replace(',', '.'), 
+                errors='coerce'
+            )
+            
+            # 2. Geçici bir DataFrame oluştur ve NaN olanları at
+            df_clean = pd.DataFrame({
+                group_var: df[group_var],
+                test_var: numeric_series
+            }).dropna()
+            
+            # 3. Eğer veri tamamen boşaldıysa (hiç sayı yoksa) bu değişkeni atla
+            if df_clean.empty:
+                st.warning(f"Variable '{test_var}' could not be converted to numeric (check for text values). Skipping.")
+                continue
+
+            # --- DÜZELTME BİTİŞİ ---
+
+            # Buradan sonrası sizin orijinal kodunuzla aynı mantıkta devam eder
+            # Ancak df_clean artık garanti olarak sayısal veri içerir.
+            
             df_clean = df_clean[df_clean[group_var].notna()]
             group_labels_plot = sorted(df_clean[group_var].unique())
             group_data = [df_clean[df_clean[group_var] == grp][test_var] for grp in group_labels_plot]
 
             ax = axes[idx]
+            # ... (kalan grafik çizim kodları aynı)
             sns.stripplot(
                 data=df_clean,
                 x=group_var,
@@ -600,3 +627,4 @@ if uploaded_file:
                 data=pdf_bytes,
                 file_name=f"figure_{export_width_px}x{export_height_px}.pdf"
             )
+
