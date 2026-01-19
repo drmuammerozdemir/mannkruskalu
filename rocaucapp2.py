@@ -204,7 +204,33 @@ def run_loo_sensitivity(dsub, group_var, col_name, original_p, test_type, presen
     if not status:
         return "Robust"
     return ", ".join(list(set(status)))
-    
+
+def calculate_effect_sizes(data1, data2):
+    """Cohen's d ve Hedges' g hesaplar."""
+    try:
+        n1, n2 = len(data1), len(data2)
+        if n1 < 2 or n2 < 2: return "-", "-"
+
+        m1, m2 = np.mean(data1), np.mean(data2)
+        v1, v2 = np.var(data1, ddof=1), np.var(data2, ddof=1)
+
+        # Pooled Standard Deviation (Havuzlanmış Standart Sapma)
+        pooled_sd = np.sqrt(((n1 - 1) * v1 + (n2 - 1) * v2) / (n1 + n2 - 2))
+        
+        if pooled_sd == 0: return "-", "-"
+
+        # Cohen's d
+        d = (m1 - m2) / pooled_sd
+
+        # Hedges' g (Küçük örneklem düzeltmesi)
+        # J düzeltme faktörü
+        df = n1 + n2 - 2
+        j = 1 - (3 / (4 * df - 1))
+        g = d * j
+
+        return f"{d:.2f}", f"{g:.2f}"
+    except:
+        return "-", "-"
 # ===================== UI =====================
 st.set_page_config(page_title="Biomarker Analysis Dashboard", layout="wide")
 st.title("🔬 Biomarker Analysis Dashboard (.csv, .sav)")
@@ -691,5 +717,6 @@ if uploaded_file:
                 data=pdf_bytes,
                 file_name=f"figure_{export_width_px}x{export_height_px}.pdf"
             )
+
 
 
