@@ -231,6 +231,40 @@ def calculate_effect_sizes(data1, data2):
         return f"{d:.2f}", f"{g:.2f}"
     except:
         return "-", "-"
+def calculate_kruskal_effect_sizes(data_groups):
+    """
+    Kruskal-Wallis için Eta-Squared ve Epsilon-Squared hesaplar.
+    (3+ grup karşılaştırmaları için)
+    """
+    try:
+        # Boş değerleri (NaN) temizle
+        clean_groups = [g[~np.isnan(g)] for g in data_groups]
+        
+        # n (toplam örneklem) ve k (grup sayısı)
+        n = sum(len(g) for g in clean_groups)
+        k = len(clean_groups)
+        
+        if k < 3: 
+            return "-", "-" # 2 grup için d/g kullanılır
+
+        # H istatistiğini hesapla
+        H, _ = kruskal(*clean_groups)
+
+        # 1. Eta Squared (Klasik)
+        # Formül: (H - k + 1) / (n - k)
+        eta_sq = (H - k + 1) / (n - k)
+        
+        # 2. Epsilon Squared (Daha az yanlı/biased olduğu kabul edilir)
+        # Formül: H / ((n^2 - 1) / (n + 1))
+        epsilon_sq = H * (n + 1) / (n**2 - 1)
+
+        # Değerleri 0-1 arasına sabitle (Matematiksel sapmalar için)
+        eta_sq = max(0, min(1, eta_sq))
+        epsilon_sq = max(0, min(1, epsilon_sq))
+
+        return f"{eta_sq:.3f}", f"{epsilon_sq:.3f}"
+    except:
+        return "-", "-"
 # ===================== UI =====================
 st.set_page_config(page_title="Biomarker Analysis Dashboard", layout="wide")
 st.title("🔬 Biomarker Analysis Dashboard (.csv, .sav)")
@@ -413,14 +447,14 @@ if uploaded_file:
         rows = []
         header_idx = []  # Stil için bölüm satır indeksleri
         
-        # SÜTUNLARI GÜNCELLE: Cohen's d ve Hedges' g eklendi
-        columns = ["Parameter"] + group_headers + ["p-value", "95% CI (Diff)", "Cohen's d", "Hedges' g", "LOO Analysis"]
+        # SÜTUNLARI GÜNCELLE: Eta ve Epsilon eklendi
+        columns = ["Parameter"] + group_headers + ["p-value", "95% CI (Diff)", "Cohen's d", "Hedges' g", "Eta-sq", "Epsilon-sq", "LOO Analysis"]
 
         with table_col:
             for it in items:
                 # Başlık satırı (Boşluk sayısını sütun sayısına göre ayarla)
                 if it["type"] == "header":
-                    rows.append([it["label"]] + [""] * (len(group_headers) + 1) + ["", "", "", ""])
+                    rows.append([it["label"]] + [""] * (len(group_headers) + 1) + ["", "", "", "", "", ""])
                     header_idx.append(len(rows) - 1)
                     continue
 
@@ -428,7 +462,7 @@ if uploaded_file:
                 disp = it["label"]
 
                 if col_name not in df.columns:
-                    rows.append([f"[Missing: {disp}]"] + [""] * (len(group_headers) + 1) + ["", "", "", ""])
+                    rows.append([f"[Missing: {disp}]"] + [""] * (len(group_headers) + 1) + ["", "", "", "", "", ""])
                     continue
 
                 dsub = df[[group_var, col_name]].dropna()
@@ -458,7 +492,7 @@ if uploaded_file:
                 p_val = np.nan
                 method_label = ""
 
-                # (Test mantığı aynı kalıyor, yer tasarrufu için özetliyorum)
+                # (Test mantığı aynı)
                 if is_bin:
                     if chosen_test == "Auto" or chosen_test == "Chi-square":
                          p_val, method_label, _, _ = chi2_rx2(dsub, group_var, col_name, present_code=int(present_code_ui), monte_carlo_B=int(mc_B) if use_mc else None)
@@ -487,23 +521,21 @@ if uploaded_file:
                         try: _, p_val = kruskal(*grp_data); method_label = "Kruskal–Wallis"
                         except: p_val = np.nan
                 
-                # ---- EK HESAPLAMALAR: CI, Cohen's d, Hedges' g, LOO ----
-                ci_str = ""
-                loo_str = ""
-                d_str = ""
-                g_str = ""
+                # ---- ETKİ BÜYÜKLÜĞÜ (EFFECT SIZES) MANTIĞI ----
+                ci_str = "-"
+                loo_str = "-"
+                d_str, g_str = "-", "-"      # 2 grup için
+                eta_str, eps_str = "-", "-"  # >2 grup için
                 
-                # Sadece 2 grup varsa ve veri sürekliyse (Numeric) hesapla
-                if len(group_labels) == 2 and not is_bin:
-                    # 1. Güven Aralığı
-                    ci_str = get_mean_diff_ci(grp_data[0], grp_data[1])
+                if not is_bin:
+                    # A) 2 Grup Varsa -> CI, Cohen's d, Hedges' g
+                    if len(group_labels) == 2:
+                        ci_str = get_mean_diff_ci(grp_data[0], grp_data[1])
+                        d_str, g_str = calculate_effect_sizes(grp_data[0], grp_data[1])
                     
-                    # 2. Effect Sizes (Cohen's d & Hedges' g)
-                    d_str, g_str = calculate_effect_sizes(grp_data[0], grp_data[1])
-                elif len(group_labels) > 2:
-                    ci_str = "-"
-                    d_str = "-"
-                    g_str = "-"
+                    # B) 3 veya daha fazla Grup Varsa -> Eta-sq, Epsilon-sq
+                    elif len(group_labels) > 2:
+                        eta_str, eps_str = calculate_kruskal_effect_sizes(grp_data)
                 
                 # LOO Analizi
                 if not is_bin and not pd.isna(p_val):
@@ -521,8 +553,8 @@ if uploaded_file:
                         sup = note_for(method_label)
                         p_disp = p_disp + sup
 
-                # SATIRA EKLE: Öncekiler + [p, CI, d, g, LOO]
-                rows.append([disp] + summaries + [p_disp, ci_str, d_str, g_str, loo_str])
+                # SATIRA EKLE
+                rows.append([disp] + summaries + [p_disp, ci_str, d_str, g_str, eta_str, eps_str, loo_str])
 
             summary_df = pd.DataFrame(rows, columns=columns)
 
@@ -536,8 +568,8 @@ if uploaded_file:
                 color = 'red' if 'Sensitive' in str(val) else 'black'
                 return f'color: {color}'
 
-            # Hizalama ayarları: Yeni sütunları sağa yasla
-            cols_to_align_right = group_headers + ["p-value", "95% CI (Diff)", "Cohen's d", "Hedges' g", "LOO Analysis"]
+            # Hizalama: Tüm istatistik sütunlarını sağa yasla
+            cols_to_align_right = group_headers + ["p-value", "95% CI (Diff)", "Cohen's d", "Hedges' g", "Eta-sq", "Epsilon-sq", "LOO Analysis"]
             
             styler = (
                 summary_df
@@ -720,6 +752,7 @@ if uploaded_file:
                 data=pdf_bytes,
                 file_name=f"figure_{export_width_px}x{export_height_px}.pdf"
             )
+
 
 
 
