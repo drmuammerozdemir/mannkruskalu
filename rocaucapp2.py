@@ -413,13 +413,14 @@ if uploaded_file:
         rows = []
         header_idx = []  # Stil için bölüm satır indeksleri
         
-        # Sütun başlıklarını güncelle: CI ve LOO eklendi
-        columns = ["Parameter"] + group_headers + ["p-value", "95% CI (Diff)", "LOO Analysis"]
+        # SÜTUNLARI GÜNCELLE: Cohen's d ve Hedges' g eklendi
+        columns = ["Parameter"] + group_headers + ["p-value", "95% CI (Diff)", "Cohen's d", "Hedges' g", "LOO Analysis"]
 
         with table_col:
             for it in items:
+                # Başlık satırı (Boşluk sayısını sütun sayısına göre ayarla)
                 if it["type"] == "header":
-                    rows.append([it["label"]] + [""] * (len(group_headers) + 1) + ["", ""])
+                    rows.append([it["label"]] + [""] * (len(group_headers) + 1) + ["", "", "", ""])
                     header_idx.append(len(rows) - 1)
                     continue
 
@@ -427,13 +428,13 @@ if uploaded_file:
                 disp = it["label"]
 
                 if col_name not in df.columns:
-                    rows.append([f"[Missing: {disp}]"] + [""] * (len(group_headers) + 1) + ["", ""])
+                    rows.append([f"[Missing: {disp}]"] + [""] * (len(group_headers) + 1) + ["", "", "", ""])
                     continue
 
                 dsub = df[[group_var, col_name]].dropna()
                 dsub = dsub[dsub[group_var].notna()]
                 
-                # --- Sayısal Temizleme (Hata önlemek için) ---
+                # --- Sayısal Temizleme ---
                 if not is_binary_like(dsub[col_name]):
                      dsub[col_name] = pd.to_numeric(dsub[col_name].astype(str).str.replace(',', '.'), errors='coerce')
                      dsub = dsub.dropna()
@@ -452,13 +453,12 @@ if uploaded_file:
                     fmt_for_var = st.session_state["var_fmt"].get(col_name, summary_format)
                     summaries = [group_summary_str(arr, fmt_for_var) for arr in grp_data]
 
-                # ---- Test seçimi (elle/Auto) ve p ----
+                # ---- Test ve p-değeri ----
                 chosen_test = st.session_state["var_test"].get(col_name, "Auto")
                 p_val = np.nan
                 method_label = ""
 
-                # ... (Buradaki Test Mantığı kodunuzdaki ile AYNI kalacak, sadece p_val hesaplanıyor) ...
-                # -- KISA TUTMAK ADINA TEST KODLARINI ÖZET GEÇİYORUM, SİZİN KOD AYNEN ÇALIŞIR --
+                # (Test mantığı aynı kalıyor, yer tasarrufu için özetliyorum)
                 if is_bin:
                     if chosen_test == "Auto" or chosen_test == "Chi-square":
                          p_val, method_label, _, _ = chi2_rx2(dsub, group_var, col_name, present_code=int(present_code_ui), monte_carlo_B=int(mc_B) if use_mc else None)
@@ -468,14 +468,8 @@ if uploaded_file:
                             tab = pd.crosstab(dsub[group_var].astype(str), (x == int(present_code_ui)).astype(int)).reindex(columns=[0,1], fill_value=0).values
                             try: _, p_val = fisher_exact(tab); method_label = "Fisher exact"
                             except: p_val = np.nan
-                    elif chosen_test == "Mann-Whitney U" or chosen_test == "Kruskal-Wallis":
-                         # Binary için numeric test istenirse
-                         try: 
-                             if len(grp_data)==2: _, p_val = mannwhitneyu(grp_data[0], grp_data[1]); method_label="MWU"
-                             else: _, p_val = kruskal(*grp_data); method_label="KW"
-                         except: pass
                 else:
-                    # Sürekli Değişkenler
+                    # Sürekli veri testleri
                     if chosen_test == "Auto":
                         if len(group_labels) == 2:
                             chosen_test_eff = "Mann–Whitney U"
@@ -487,31 +481,38 @@ if uploaded_file:
                             except: p_val = np.nan
                         method_label = chosen_test_eff
                     elif chosen_test == "Mann-Whitney U" and len(group_labels) == 2:
-                        try: _, p_val = mannwhitneyu(grp_data[0], grp_data[1], alternative="two-sided")
-                        except: p_val = np.nan; method_label = "Mann–Whitney U"
+                        try: _, p_val = mannwhitneyu(grp_data[0], grp_data[1], alternative="two-sided"); method_label = "Mann–Whitney U"
+                        except: p_val = np.nan
                     elif chosen_test == "Kruskal-Wallis":
-                        try: _, p_val = kruskal(*grp_data)
-                        except: p_val = np.nan; method_label = "Kruskal–Wallis"
+                        try: _, p_val = kruskal(*grp_data); method_label = "Kruskal–Wallis"
+                        except: p_val = np.nan
                 
-                # ---- YENİ: CI ve LOO Hesaplamaları ----
+                # ---- EK HESAPLAMALAR: CI, Cohen's d, Hedges' g, LOO ----
                 ci_str = ""
                 loo_str = ""
+                d_str = ""
+                g_str = ""
                 
-                # CI: Sadece 2 grup varsa ve veri sürekliyse (Binary için OR gerekir, şimdilik sürekliye odaklandık)
+                # Sadece 2 grup varsa ve veri sürekliyse (Numeric) hesapla
                 if len(group_labels) == 2 and not is_bin:
+                    # 1. Güven Aralığı
                     ci_str = get_mean_diff_ci(grp_data[0], grp_data[1])
+                    
+                    # 2. Effect Sizes (Cohen's d & Hedges' g)
+                    d_str, g_str = calculate_effect_sizes(grp_data[0], grp_data[1])
                 elif len(group_labels) > 2:
-                    ci_str = "N/A (>2 grp)"
+                    ci_str = "-"
+                    d_str = "-"
+                    g_str = "-"
                 
-                # LOO: Sadece sürekli verilerde anlamlıdır (Min/Max çıkarma)
+                # LOO Analizi
                 if not is_bin and not pd.isna(p_val):
-                    # Test tipini belirle (Auto ise ve 2 grupsa MWU'dur)
                     t_type = "Mann-Whitney U" if (len(group_labels)==2 and chosen_test=="Auto") else chosen_test
                     loo_str = run_loo_sensitivity(dsub, group_var, col_name, p_val, t_type)
                 else:
                     loo_str = "-"
 
-                # p yazdırma + üstsimge
+                # p yazdırma
                 if not show_nonsignificant and (pd.isna(p_val) or p_val > 0.05):
                     p_disp = ""
                 else:
@@ -520,22 +521,24 @@ if uploaded_file:
                         sup = note_for(method_label)
                         p_disp = p_disp + sup
 
-                # SATIRA EKLE: Öncekiler + [p_disp, ci_str, loo_str]
-                rows.append([disp] + summaries + [p_disp, ci_str, loo_str])
+                # SATIRA EKLE: Öncekiler + [p, CI, d, g, LOO]
+                rows.append([disp] + summaries + [p_disp, ci_str, d_str, g_str, loo_str])
 
             summary_df = pd.DataFrame(rows, columns=columns)
 
-            # ---------- STYLING (Arial, hizalama, bölüm başlığı kalın/çizgi) ----------
+            # ---------- STYLING ----------
             def highlight_sections(row):
                 if row.name in header_idx:
                     return ["font-weight: bold; border-top: 1px solid black; background-color: #f7f7f7;"] * len(row)
                 return [""] * len(row)
             
-            # LOO Analysis sütununda "Sensitive" yazanları kırmızı yapalım
             def highlight_sensitive(val):
                 color = 'red' if 'Sensitive' in str(val) else 'black'
                 return f'color: {color}'
 
+            # Hizalama ayarları: Yeni sütunları sağa yasla
+            cols_to_align_right = group_headers + ["p-value", "95% CI (Diff)", "Cohen's d", "Hedges' g", "LOO Analysis"]
+            
             styler = (
                 summary_df
                 .style
@@ -544,7 +547,7 @@ if uploaded_file:
                 .applymap(highlight_sensitive, subset=["LOO Analysis"])
                 .set_properties(**{"font-family": "Arial", "font-size": "12pt"})
                 .set_properties(subset=pd.IndexSlice[:, ["Parameter"]], **{"text-align": "left"})
-                .set_properties(subset=pd.IndexSlice[:, group_headers + ["p-value", "95% CI (Diff)", "LOO Analysis"]], **{"text-align": "right"})
+                .set_properties(subset=pd.IndexSlice[:, cols_to_align_right], **{"text-align": "right"})
             )
 
             st.dataframe(styler, use_container_width=True)
@@ -717,6 +720,7 @@ if uploaded_file:
                 data=pdf_bytes,
                 file_name=f"figure_{export_width_px}x{export_height_px}.pdf"
             )
+
 
 
 
