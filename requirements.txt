@@ -7,3 +7,5 @@ scipy
 statsmodels
 scikit-posthocs
 pyreadstat
+openpyxl
+xlrd
