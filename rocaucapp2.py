@@ -269,7 +269,7 @@ def calculate_kruskal_effect_sizes(data_groups):
 st.set_page_config(page_title="Biomarker Analysis Dashboard", layout="wide")
 st.title("🔬 Biomarker Analysis Dashboard (.csv, .sav)")
 
-uploaded_file = st.file_uploader("Upload CSV or SPSS (.sav)", type=["csv", "sav"])
+uploaded_file = st.file_uploader("Upload CSV, Excel or SPSS", type=["csv", "sav", "xls", "xlsx"])
 
 if uploaded_file:
     # ---- Load data ----
@@ -280,6 +280,9 @@ if uploaded_file:
             tmp_file.write(uploaded_file.getbuffer())
             tmp_file_path = tmp_file.name
         df, meta = pyreadstat.read_sav(tmp_file_path)
+    # --- YENİ EKLENEN KISIM (Excel Desteği) ---
+    elif uploaded_file.name.endswith((".xls", ".xlsx")):
+        df = pd.read_excel(uploaded_file)
 
     st.subheader("Edit Your Data (Optional)")
     df = st.data_editor(df, num_rows="dynamic", use_container_width=True)
@@ -752,6 +755,7 @@ if uploaded_file:
                 data=pdf_bytes,
                 file_name=f"figure_{export_width_px}x{export_height_px}.pdf"
             )
+
 
 
 
