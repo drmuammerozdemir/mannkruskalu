@@ -579,7 +579,7 @@ if uploaded_file:
                 .style
                 .format(na_rep="")
                 .apply(highlight_sections, axis=1)
-                .applymap(highlight_sensitive, subset=["LOO Analysis"])
+                .map(highlight_sensitive, subset=["LOO Analysis"])
                 .set_properties(**{"font-family": "Arial", "font-size": "12pt"})
                 .set_properties(subset=pd.IndexSlice[:, ["Parameter"]], **{"text-align": "left"})
                 .set_properties(subset=pd.IndexSlice[:, cols_to_align_right], **{"text-align": "right"})
