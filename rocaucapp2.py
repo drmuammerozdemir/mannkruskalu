@@ -613,16 +613,16 @@ if uploaded_file:
             .set_properties(subset=pd.IndexSlice[:, cols_to_align_right], **{"text-align": "right"})
         )
 
-        st.dataframe(styler, use_container_width=True)
+    st.dataframe(styler, use_container_width=True)
 
-            # ---------- Dipnotlar ----------
-            if method_notes:
-                lines = []
-                # Kullanıcıya anlaşılır dipnotlar
-                for label, sup in method_notes.items():
-                    nice = label.replace("--", "–")
-                    lines.append(f"{sup} {nice}")
-                st.markdown("**Notes:**  \n" + "  \n".join(lines))
+        # ---------- Dipnotlar ----------
+        if method_notes:
+            lines = []
+            # Kullanıcıya anlaşılır dipnotlar
+            for label, sup in method_notes.items():
+                nice = label.replace("--", "–")
+                lines.append(f"{sup} {nice}")
+            st.markdown("**Notes:**  \n" + "  \n".join(lines))
 
     # ===================== STATISTICAL PLOTS =====================
     if analysis_type == "Statistical Plots":
