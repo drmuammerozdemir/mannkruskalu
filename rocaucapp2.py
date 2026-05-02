@@ -587,33 +587,33 @@ if uploaded_file:
 
 
             # ---------- STYLING ----------
-            def highlight_sections(row):
-                if row.name in header_idx:
-                    return ["font-weight: bold; border-top: 1px solid black; background-color: #f7f7f7;"] * len(row)
-                return [""] * len(row)
+        def highlight_sections(row):
+            if row.name in header_idx:
+                return ["font-weight: bold; border-top: 1px solid black; background-color: #f7f7f7;"] * len(row)
+            return [""] * len(row)
 
 
-            def highlight_sensitive(val):
-                color = 'red' if 'Sensitive' in str(val) else 'black'
-                return f'color: {color}'
+        def highlight_sensitive(val):
+            color = 'red' if 'Sensitive' in str(val) else 'black'
+            return f'color: {color}'
 
 
-            # Hizalama: Tüm istatistik sütunlarını sağa yasla
-            cols_to_align_right = group_headers + ["p-value", "q-value (FDR)", "h", "95% CI (Diff)", "Cohen's d",
-                                                   "Hedges' g", "Eta-sq", "Epsilon-sq", "LOO Analysis"]
+        # Hizalama: Tüm istatistik sütunlarını sağa yasla
+        cols_to_align_right = group_headers + ["p-value", "q-value (FDR)", "h", "95% CI (Diff)", "Cohen's d",
+                                               "Hedges' g", "Eta-sq", "Epsilon-sq", "LOO Analysis"]
 
-            styler = (
-                summary_df
-                .style
-                .format(na_rep="")
-                .apply(highlight_sections, axis=1)
-                .map(highlight_sensitive, subset=["LOO Analysis"])
-                .set_properties(**{"font-family": "Arial", "font-size": "12pt"})
-                .set_properties(subset=pd.IndexSlice[:, ["Parameter"]], **{"text-align": "left"})
-                .set_properties(subset=pd.IndexSlice[:, cols_to_align_right], **{"text-align": "right"})
-            )
+        styler = (
+            summary_df
+            .style
+            .format(na_rep="")
+            .apply(highlight_sections, axis=1)
+            .map(highlight_sensitive, subset=["LOO Analysis"])
+            .set_properties(**{"font-family": "Arial", "font-size": "12pt"})
+            .set_properties(subset=pd.IndexSlice[:, ["Parameter"]], **{"text-align": "left"})
+            .set_properties(subset=pd.IndexSlice[:, cols_to_align_right], **{"text-align": "right"})
+        )
 
-            st.dataframe(styler, use_container_width=True)
+        st.dataframe(styler, use_container_width=True)
 
             # ---------- Dipnotlar ----------
             if method_notes:
