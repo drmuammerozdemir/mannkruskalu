@@ -13,6 +13,8 @@ import itertools
 import math
 from io import BytesIO
 from statsmodels.stats.weightstats import DescrStatsW, CompareMeans
+from statsmodels.stats.multitest import multipletests
+
 
 # ===================== Helpers (formatlama) =====================
 def format_p(p):
@@ -23,11 +25,13 @@ def format_p(p):
     except Exception:
         return ""
 
+
 def format_p_label(p):
     s = format_p(p)
     if not s:
         return ""
     return f"p {s}" if s.startswith("<") else f"p = {s}"
+
 
 def fmt_num(x, nd=2):
     try:
@@ -35,12 +39,14 @@ def fmt_num(x, nd=2):
     except Exception:
         return ""
 
+
 # ---- Eski export yardımcıları ----
 def fig_to_bytes(fig, fmt):
     buf = BytesIO()
     fig.savefig(buf, format=fmt, bbox_inches="tight")
     buf.seek(0)
     return buf
+
 
 def export_fig_bytes(fig, fmt, width_px=None, height_px=None, dpi=300):
     orig_size_in = fig.get_size_inches()
@@ -62,11 +68,13 @@ def export_fig_bytes(fig, fmt, width_px=None, height_px=None, dpi=300):
     finally:
         fig.set_size_inches(orig_size_in)
 
+
 # ===================== Binary (0/1, 1/2) yardımcıları =====================
 def is_binary_like(s: pd.Series) -> bool:
     vals = pd.to_numeric(s, errors="coerce").dropna().unique()
     sv = set(vals)
     return sv.issubset({0, 1}) or sv.issubset({1, 2})
+
 
 def binary_summary_n_pct(s: pd.Series, present_code: int = 1) -> str:
     x = pd.to_numeric(s, errors="coerce")
@@ -74,6 +82,7 @@ def binary_summary_n_pct(s: pd.Series, present_code: int = 1) -> str:
     n1 = int((x == present_code).sum())
     pct = (n1 / n * 100) if n > 0 else 0.0
     return f"{n1} ({pct:.1f}%)".replace(".", ",")
+
 
 def chi2_rx2(dsub: pd.DataFrame, group_var: str, col_name: str,
              present_code: int = 1, monte_carlo_B: int = None, seed: int = 42):
@@ -127,6 +136,8 @@ def chi2_rx2(dsub: pd.DataFrame, group_var: str, col_name: str,
     k = min(r - 1, c - 1)
     V = np.sqrt(chi2 / (n * k)) if k > 0 and n > 0 else np.nan
     return p, method, V, tab
+
+
 # ===================== Yeni Helperlar: CI ve LOO =====================
 def get_mean_diff_ci(data1, data2, alpha=0.05):
     """İki grup arasındaki ortalama farkı için %95 GA hesaplar (Welch's t-interval)."""
@@ -139,6 +150,7 @@ def get_mean_diff_ci(data1, data2, alpha=0.05):
     except:
         return "-"
 
+
 def run_loo_sensitivity(dsub, group_var, col_name, original_p, test_type, present_code=1):
     """
     Leave-One-Out (LOO) Analizi:
@@ -147,27 +159,27 @@ def run_loo_sensitivity(dsub, group_var, col_name, original_p, test_type, presen
     """
     if pd.isna(original_p):
         return "-"
-    
+
     # Sadece anlamlı veya sınırdaki sonuçlar için analiz yapalım (Performans için)
     # Ancak kullanıcı her şeyi görmek isterse buradaki if kaldırılabilir.
     threshold = 0.05
     is_sig = original_p < threshold
-    
+
     # Hangi testi kullanacağız?
     def run_test(subset):
         grps = [subset[subset[group_var] == g][col_name] for g in subset[group_var].unique()]
         if len(grps) < 2: return np.nan
-        
+
         try:
             if test_type == "Mann-Whitney U":
                 _, p = mannwhitneyu(grps[0], grps[1], alternative="two-sided")
             elif test_type == "Kruskal-Wallis":
                 _, p = kruskal(*grps)
             elif "Chi" in test_type or "Fisher" in test_type:
-                 # Kategorik için LOO çok anlamlı olmayabilir ama Min/Max yerine rastgele drop denenebilir
-                 # Şimdilik kategorik için LOO pas geçiyoruz.
-                 return original_p 
-            else: # Auto (Varsayalım Mann-Whitney)
+                # Kategorik için LOO çok anlamlı olmayabilir ama Min/Max yerine rastgele drop denenebilir
+                # Şimdilik kategorik için LOO pas geçiyoruz.
+                return original_p
+            else:  # Auto (Varsayalım Mann-Whitney)
                 _, p = mannwhitneyu(grps[0], grps[1], alternative="two-sided")
             return p
         except:
@@ -175,35 +187,36 @@ def run_loo_sensitivity(dsub, group_var, col_name, original_p, test_type, presen
 
     # Veriyi sırala
     d_sorted = dsub.sort_values(by=col_name)
-    
+
     # 1. Minimumu çıkar
     d_no_min = d_sorted.iloc[1:]
     p_no_min = run_test(d_no_min)
-    
+
     # 2. Maksimumu çıkar
     d_no_max = d_sorted.iloc[:-1]
     p_no_max = run_test(d_no_max)
-    
+
     # Karşılaştırma
     status = []
-    
+
     # Min atılınca durum değişti mi?
     if not pd.isna(p_no_min):
         if is_sig and p_no_min >= threshold:
             status.append("Sensitive (Min)")
         elif not is_sig and p_no_min < threshold:
             status.append("Gain Sig (Min)")
-            
+
     # Max atılınca durum değişti mi?
     if not pd.isna(p_no_max):
         if is_sig and p_no_max >= threshold:
             status.append("Sensitive (Max)")
         elif not is_sig and p_no_max < threshold:
             status.append("Gain Sig (Max)")
-            
+
     if not status:
         return "Robust"
     return ", ".join(list(set(status)))
+
 
 def calculate_effect_sizes(data1, data2):
     """Cohen's d ve Hedges' g hesaplar."""
@@ -216,7 +229,7 @@ def calculate_effect_sizes(data1, data2):
 
         # Pooled Standard Deviation (Havuzlanmış Standart Sapma)
         pooled_sd = np.sqrt(((n1 - 1) * v1 + (n2 - 1) * v2) / (n1 + n2 - 2))
-        
+
         if pooled_sd == 0: return "-", "-"
 
         # Cohen's d
@@ -231,6 +244,8 @@ def calculate_effect_sizes(data1, data2):
         return f"{d:.2f}", f"{g:.2f}"
     except:
         return "-", "-"
+
+
 def calculate_kruskal_effect_sizes(data_groups):
     """
     Kruskal-Wallis için Eta-Squared ve Epsilon-Squared hesaplar.
@@ -239,13 +254,13 @@ def calculate_kruskal_effect_sizes(data_groups):
     try:
         # Boş değerleri (NaN) temizle
         clean_groups = [g[~np.isnan(g)] for g in data_groups]
-        
+
         # n (toplam örneklem) ve k (grup sayısı)
         n = sum(len(g) for g in clean_groups)
         k = len(clean_groups)
-        
-        if k < 3: 
-            return "-", "-" # 2 grup için d/g kullanılır
+
+        if k < 3:
+            return "-", "-"  # 2 grup için d/g kullanılır
 
         # H istatistiğini hesapla
         H, _ = kruskal(*clean_groups)
@@ -253,10 +268,10 @@ def calculate_kruskal_effect_sizes(data_groups):
         # 1. Eta Squared (Klasik)
         # Formül: (H - k + 1) / (n - k)
         eta_sq = (H - k + 1) / (n - k)
-        
+
         # 2. Epsilon Squared (Daha az yanlı/biased olduğu kabul edilir)
         # Formül: H / ((n^2 - 1) / (n + 1))
-        epsilon_sq = H * (n + 1) / (n**2 - 1)
+        epsilon_sq = H * (n + 1) / (n ** 2 - 1)
 
         # Değerleri 0-1 arasına sabitle (Matematiksel sapmalar için)
         eta_sq = max(0, min(1, eta_sq))
@@ -265,6 +280,8 @@ def calculate_kruskal_effect_sizes(data_groups):
         return f"{eta_sq:.3f}", f"{epsilon_sq:.3f}"
     except:
         return "-", "-"
+
+
 # ===================== UI =====================
 st.set_page_config(page_title="Biomarker Analysis Dashboard", layout="wide")
 st.title("🔬 Biomarker Analysis Dashboard (.csv, .sav)")
@@ -312,7 +329,8 @@ if uploaded_file:
     group_var = st.sidebar.selectbox("Select Group Variable (categorical)", options=df.columns)
     test_vars = st.sidebar.multiselect("Select Test Variables (numeric or binary)", options=df.columns)
 
-    test_choice = st.sidebar.radio("Default omnibus test (for continuous)", ["Auto", "Mann-Whitney U", "Kruskal-Wallis"])
+    test_choice = st.sidebar.radio("Default omnibus test (for continuous)",
+                                   ["Auto", "Mann-Whitney U", "Kruskal-Wallis"])
     show_nonsignificant = st.sidebar.checkbox("Show Non-Significant p-values (p > 0.05)", value=False)
 
     # ---- Export settings (resolution & DPI) ----
@@ -324,7 +342,8 @@ if uploaded_file:
 
     # ---- Binary ayarları ----
     with st.sidebar.expander("Binary settings (0/1, 1/2)"):
-        present_code_ui = st.selectbox("Code that means 'present' (var=1)", options=[1, 2], index=1 if 2 in df.columns else 0)
+        present_code_ui = st.selectbox("Code that means 'present' (var=1)", options=[1, 2],
+                                       index=1 if 2 in df.columns else 0)
         use_mc = st.checkbox("Use Monte Carlo p for Rx2 if sparse", value=False)
         mc_B = st.number_input("Permutations (B)", min_value=1000, value=20000, step=1000)
 
@@ -353,6 +372,7 @@ if uploaded_file:
             height=220
         )
 
+
         # ---------- Yardımcı: seçilen formata göre grup özet stringi ----------
         def group_summary_str(arr, fmt):
             arr = np.array(arr, dtype=float)
@@ -378,6 +398,7 @@ if uploaded_file:
                 q1 = np.percentile(arr, 25)
                 q3 = np.percentile(arr, 75)
                 return f"{fmt_num(med)} [{fmt_num(q1)}–{fmt_num(q3)}]"
+
 
         # ---------- Parse lines (section titles & variables) ----------
         lines = [ln.strip() for ln in sections_text.splitlines() if ln.strip() != ""]
@@ -437,8 +458,11 @@ if uploaded_file:
                 )
 
         # ---------- Üstsimge (a,b,c,...) atama için yardımcılar ----------
-        supers = ['ᵃ','ᵇ','ᶜ','ᵈ','ᵉ','ᶠ','ᵍ','ʰ','ᶦ','ʲ','ᵏ','ˡ','ᵐ','ⁿ','ᵒ','ᵖ','ʳ','ˢ','ᵗ','ᵘ','ᵛ','ʷ','ˣ','ʸ','ᶻ']
+        supers = ['ᵃ', 'ᵇ', 'ᶜ', 'ᵈ', 'ᵉ', 'ᶠ', 'ᵍ', 'ʰ', 'ᶦ', 'ʲ', 'ᵏ', 'ˡ', 'ᵐ', 'ⁿ', 'ᵒ', 'ᵖ', 'ʳ', 'ˢ', 'ᵗ', 'ᵘ',
+                  'ᵛ', 'ʷ', 'ˣ', 'ʸ', 'ᶻ']
         method_notes = {}  # method_label -> superscript
+
+
         def note_for(method_label: str):
             if not method_label:
                 return ""
@@ -446,134 +470,138 @@ if uploaded_file:
                 method_notes[method_label] = supers[len(method_notes) % len(supers)]
             return method_notes[method_label]
 
-# ---------- Tabloyu oluştur ----------
+
+        # ---------- Tabloyu oluştur ----------
         rows = []
-        header_idx = []  # Stil için bölüm satır indeksleri
-        
-        # SÜTUNLARI GÜNCELLE: Eta ve Epsilon eklendi
-        columns = ["Parameter"] + group_headers + ["p-value", "95% CI (Diff)", "Cohen's d", "Hedges' g", "Eta-sq", "Epsilon-sq", "LOO Analysis"]
+        header_idx = []
+        all_p_values = []  # Düzeltme için p değerlerini toplayacağız
 
-        with table_col:
-            for it in items:
-                # Başlık satırı (Boşluk sayısını sütun sayısına göre ayarla)
-                if it["type"] == "header":
-                    rows.append([it["label"]] + [""] * (len(group_headers) + 1) + ["", "", "", "", "", ""])
-                    header_idx.append(len(rows) - 1)
-                    continue
+        # SÜTUNLARI GÜNCELLE: q-value ve h eklendi
+        columns = ["Parameter"] + group_headers + ["p-value", "q-value (FDR)", "h", "95% CI (Diff)", "Cohen's d",
+                                                   "Hedges' g", "Eta-sq", "Epsilon-sq", "LOO Analysis"]
 
-                col_name = it["name"]
-                disp = it["label"]
+        # Önce p değerlerini toplamak için ilk döngü
+        temp_data = []
+        for it in items:
+            if it["type"] == "header":
+                temp_data.append({"type": "header", "label": it["label"]})
+                continue
 
-                if col_name not in df.columns:
-                    rows.append([f"[Missing: {disp}]"] + [""] * (len(group_headers) + 1) + ["", "", "", "", "", ""])
-                    continue
+            col_name = it["name"]
+            disp = it["label"]
+            if col_name not in df.columns:
+                temp_data.append({"type": "missing", "disp": disp})
+                continue
 
-                dsub = df[[group_var, col_name]].dropna()
-                dsub = dsub[dsub[group_var].notna()]
-                
-                # --- Sayısal Temizleme ---
-                if not is_binary_like(dsub[col_name]):
-                     dsub[col_name] = pd.to_numeric(dsub[col_name].astype(str).str.replace(',', '.'), errors='coerce')
-                     dsub = dsub.dropna()
-                
-                grp_data = [dsub[dsub[group_var] == g][col_name].values for g in group_labels]
-                is_bin = is_binary_like(dsub[col_name])
+            dsub = df[[group_var, col_name]].dropna()
+            if not is_binary_like(dsub[col_name]):
+                dsub[col_name] = pd.to_numeric(dsub[col_name].astype(str).str.replace(',', '.'), errors='coerce')
+                dsub = dsub.dropna()
 
-                # Özet Hesaplama
+            grp_data = [dsub[dsub[group_var] == g][col_name].values for g in group_labels]
+            is_bin = is_binary_like(dsub[col_name])
+
+            # Test hesaplama
+            p_val = np.nan
+            chosen_test = st.session_state["var_test"].get(col_name, "Auto")
+            method_label = ""
+
+            try:
                 if is_bin:
-                    present_code = int(present_code_ui)
-                    summaries = []
-                    for gname in group_labels:
-                        s_grp = dsub.loc[dsub[group_var] == gname, col_name]
-                        summaries.append(binary_summary_n_pct(s_grp, present_code))
+                    p_val, method_label, _, _ = chi2_rx2(dsub, group_var, col_name, present_code=int(present_code_ui),
+                                                         monte_carlo_B=int(mc_B) if use_mc else None)
                 else:
-                    fmt_for_var = st.session_state["var_fmt"].get(col_name, summary_format)
-                    summaries = [group_summary_str(arr, fmt_for_var) for arr in grp_data]
-
-                # ---- Test ve p-değeri ----
-                chosen_test = st.session_state["var_test"].get(col_name, "Auto")
-                p_val = np.nan
-                method_label = ""
-
-                # (Test mantığı aynı)
-                if is_bin:
-                    if chosen_test == "Auto" or chosen_test == "Chi-square":
-                         p_val, method_label, _, _ = chi2_rx2(dsub, group_var, col_name, present_code=int(present_code_ui), monte_carlo_B=int(mc_B) if use_mc else None)
-                    elif chosen_test == "Fisher exact":
-                        if len(group_labels) == 2:
-                            x = pd.to_numeric(dsub[col_name], errors="coerce")
-                            tab = pd.crosstab(dsub[group_var].astype(str), (x == int(present_code_ui)).astype(int)).reindex(columns=[0,1], fill_value=0).values
-                            try: _, p_val = fisher_exact(tab); method_label = "Fisher exact"
-                            except: p_val = np.nan
-                else:
-                    # Sürekli veri testleri
                     if chosen_test == "Auto":
-                        if len(group_labels) == 2:
-                            chosen_test_eff = "Mann–Whitney U"
-                            try: _, p_val = mannwhitneyu(grp_data[0], grp_data[1], alternative="two-sided")
-                            except: p_val = np.nan
-                        else:
-                            chosen_test_eff = "Kruskal–Wallis"
-                            try: _, p_val = kruskal(*grp_data)
-                            except: p_val = np.nan
-                        method_label = chosen_test_eff
-                    elif chosen_test == "Mann-Whitney U" and len(group_labels) == 2:
-                        try: _, p_val = mannwhitneyu(grp_data[0], grp_data[1], alternative="two-sided"); method_label = "Mann–Whitney U"
-                        except: p_val = np.nan
-                    elif chosen_test == "Kruskal-Wallis":
-                        try: _, p_val = kruskal(*grp_data); method_label = "Kruskal–Wallis"
-                        except: p_val = np.nan
-                
-                # ---- ETKİ BÜYÜKLÜĞÜ (EFFECT SIZES) MANTIĞI ----
-                ci_str = "-"
-                loo_str = "-"
-                d_str, g_str = "-", "-"      # 2 grup için
-                eta_str, eps_str = "-", "-"  # >2 grup için
-                
-                if not is_bin:
-                    # A) 2 Grup Varsa -> CI, Cohen's d, Hedges' g
-                    if len(group_labels) == 2:
-                        ci_str = get_mean_diff_ci(grp_data[0], grp_data[1])
-                        d_str, g_str = calculate_effect_sizes(grp_data[0], grp_data[1])
-                    
-                    # B) 3 veya daha fazla Grup Varsa -> Eta-sq, Epsilon-sq
-                    elif len(group_labels) > 2:
-                        eta_str, eps_str = calculate_kruskal_effect_sizes(grp_data)
-                
-                # LOO Analizi
-                if not is_bin and not pd.isna(p_val):
-                    t_type = "Mann-Whitney U" if (len(group_labels)==2 and chosen_test=="Auto") else chosen_test
-                    loo_str = run_loo_sensitivity(dsub, group_var, col_name, p_val, t_type)
+                        test_to_use = "Mann-Whitney U" if len(group_labels) == 2 else "Kruskal-Wallis"
+                    else:
+                        test_to_use = chosen_test
+
+                    if test_to_use == "Mann-Whitney U":
+                        _, p_val = mannwhitneyu(grp_data[0], grp_data[1], alternative="two-sided")
+                        method_label = "Mann–Whitney U"
+                    else:
+                        _, p_val = kruskal(*grp_data)
+                        method_label = "Kruskal–Wallis"
+            except:
+                p_val = np.nan
+
+            temp_data.append({
+                "type": "var", "col_name": col_name, "disp": disp,
+                "p_val": p_val, "method_label": method_label, "grp_data": grp_data,
+                "is_bin": is_bin, "dsub": dsub
+            })
+            if not np.isnan(p_val):
+                all_p_values.append(p_val)
+
+        # Benjamini-Hochberg Düzeltmesi (FDR)
+        q_values_map = {}
+        if all_p_values:
+            rejected, q_vals, _, _ = multipletests(all_p_values, alpha=0.05, method='fdr_bh')
+            for p, q, rej in zip(all_p_values, q_vals, rejected):
+                q_values_map[p] = (q, rej)
+
+        # Tablo satırlarını oluşturma
+        for entry in temp_data:
+            if entry["type"] == "header":
+                rows.append([entry["label"]] + [""] * (len(columns) - 1))
+                header_idx.append(len(rows) - 1)
+                continue
+            if entry["type"] == "missing":
+                rows.append([f"[Missing: {entry['disp']}]"] + [""] * (len(columns) - 1))
+                continue
+
+            # Özetler
+            if entry["is_bin"]:
+                summaries = [binary_summary_n_pct(entry["dsub"].loc[entry["dsub"][group_var] == g, entry["col_name"]],
+                                                  int(present_code_ui)) for g in group_labels]
+            else:
+                fmt = st.session_state["var_fmt"].get(entry["col_name"], summary_format)
+                summaries = [group_summary_str(arr, fmt) for arr in entry["grp_data"]]
+
+            # p, q ve h değerleri
+            p_disp, q_disp, h_disp = "", "", ""
+            if not np.isnan(entry["p_val"]):
+                if show_nonsignificant or entry["p_val"] <= 0.05:
+                    sup = note_for(entry["method_label"])
+                    p_disp = format_p(entry["p_val"]) + sup
+
+                    if entry["p_val"] in q_values_map:
+                        q_val, is_rej = q_values_map[entry["p_val"]]
+                        q_disp = format_p(q_val)
+                        h_disp = "*" if is_rej else "ns"
+
+            # Etki büyüklükleri ve LOO (Sizin mevcut fonksiyonlarınızla)
+            ci, d, g, eta, eps, loo = "-", "-", "-", "-", "-", "-"
+            if not entry["is_bin"]:
+                if len(group_labels) == 2:
+                    ci = get_mean_diff_ci(entry["grp_data"][0], entry["grp_data"][1])
+                    d, g = calculate_effect_sizes(entry["grp_data"][0], entry["grp_data"][1])
                 else:
-                    loo_str = "-"
+                    eta, eps = calculate_kruskal_effect_sizes(entry["grp_data"])
+                loo = run_loo_sensitivity(entry["dsub"], group_var, entry["col_name"], entry["p_val"],
+                                          entry["method_label"])
 
-                # p yazdırma
-                if not show_nonsignificant and (pd.isna(p_val) or p_val > 0.05):
-                    p_disp = ""
-                else:
-                    p_disp = format_p(p_val)
-                    if p_disp:
-                        sup = note_for(method_label)
-                        p_disp = p_disp + sup
+            rows.append([entry["disp"]] + summaries + [p_disp, q_disp, h_disp, ci, d, g, eta, eps, loo])
 
-                # SATIRA EKLE
-                rows.append([disp] + summaries + [p_disp, ci_str, d_str, g_str, eta_str, eps_str, loo_str])
+        summary_df = pd.DataFrame(rows, columns=columns)
 
-            summary_df = pd.DataFrame(rows, columns=columns)
 
             # ---------- STYLING ----------
             def highlight_sections(row):
                 if row.name in header_idx:
                     return ["font-weight: bold; border-top: 1px solid black; background-color: #f7f7f7;"] * len(row)
                 return [""] * len(row)
-            
+
+
             def highlight_sensitive(val):
                 color = 'red' if 'Sensitive' in str(val) else 'black'
                 return f'color: {color}'
 
+
             # Hizalama: Tüm istatistik sütunlarını sağa yasla
-            cols_to_align_right = group_headers + ["p-value", "95% CI (Diff)", "Cohen's d", "Hedges' g", "Eta-sq", "Epsilon-sq", "LOO Analysis"]
-            
+            cols_to_align_right = group_headers + ["p-value", "q-value (FDR)", "h", "95% CI (Diff)", "Cohen's d",
+                                                   "Hedges' g", "Eta-sq", "Epsilon-sq", "LOO Analysis"]
+
             styler = (
                 summary_df
                 .style
@@ -609,7 +637,8 @@ if uploaded_file:
         )
 
         custom_labels = [s.strip() for s in custom_labels_input.split(",")] if custom_labels_input.strip() else None
-        subplot_titles = [s.strip() for s in subplot_titles_input.split(",")] if subplot_titles_input.strip() else test_vars
+        subplot_titles = [s.strip() for s in
+                          subplot_titles_input.split(",")] if subplot_titles_input.strip() else test_vars
 
         ncols = math.ceil(math.sqrt(len(test_vars))) if len(test_vars) > 0 else 1
         nrows = math.ceil(len(test_vars) / ncols) if len(test_vars) > 0 else 1
@@ -618,34 +647,35 @@ if uploaded_file:
         axes = np.array(axes).reshape(-1)
         fig.subplots_adjust(hspace=0.4, wspace=0.3)
 
-# ... (kodun üst kısımları aynı) ...
+        # ... (kodun üst kısımları aynı) ...
 
         for idx, test_var in enumerate(test_vars):
             # --- DÜZELTME BAŞLANGICI ---
-            
+
             # 1. Önce veriyi temizle: Virgülleri noktaya çevir (Türkiye formatı sorunu için)
             # ve zorla sayısala çevir (pd.to_numeric). Sayı olmayanlar NaN olur.
             numeric_series = pd.to_numeric(
-                df[test_var].astype(str).str.replace(',', '.'), 
+                df[test_var].astype(str).str.replace(',', '.'),
                 errors='coerce'
             )
-            
+
             # 2. Geçici bir DataFrame oluştur ve NaN olanları at
             df_clean = pd.DataFrame({
                 group_var: df[group_var],
                 test_var: numeric_series
             }).dropna()
-            
+
             # 3. Eğer veri tamamen boşaldıysa (hiç sayı yoksa) bu değişkeni atla
             if df_clean.empty:
-                st.warning(f"Variable '{test_var}' could not be converted to numeric (check for text values). Skipping.")
+                st.warning(
+                    f"Variable '{test_var}' could not be converted to numeric (check for text values). Skipping.")
                 continue
 
             # --- DÜZELTME BİTİŞİ ---
 
             # Buradan sonrası sizin orijinal kodunuzla aynı mantıkta devam eder
             # Ancak df_clean artık garanti olarak sayısal veri içerir.
-            
+
             df_clean = df_clean[df_clean[group_var].notna()]
             group_labels_plot = sorted(df_clean[group_var].unique())
             group_data = [df_clean[df_clean[group_var] == grp][test_var] for grp in group_labels_plot]
@@ -686,7 +716,7 @@ if uploaded_file:
                 ypos = ymax + 0.1 * (ymax if ymax != 0 else 1)
                 ax.plot([0, 0, 1, 1], [ypos, ypos * 1.05, ypos * 1.05, ypos], lw=1.5, c="k")
                 if show_nonsignificant or p_value <= 0.05:
-                    ax.text(0.5, ypos + 0.07*ypos, format_p_label(p_value), ha='center', va='bottom')
+                    ax.text(0.5, ypos + 0.07 * ypos, format_p_label(p_value), ha='center', va='bottom')
             else:
                 h_stat, p_value = kruskal(*group_data)
                 if posthoc_test_choice == "Dunn":
