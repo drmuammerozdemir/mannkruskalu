@@ -613,7 +613,7 @@ if uploaded_file:
             .set_properties(subset=pd.IndexSlice[:, cols_to_align_right], **{"text-align": "right"})
         )
 
-    st.dataframe(styler, use_container_width=True)
+        st.dataframe(styler, use_container_width=True)
 
         # ---------- Dipnotlar ----------
         if method_notes:
